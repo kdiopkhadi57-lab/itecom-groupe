@@ -6,6 +6,7 @@ import java.util.Locale;
 
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -32,7 +33,6 @@ import com.elearning.repository.ExamStudentRepository;
 import com.elearning.repository.QcmPassageRepository;
 import com.elearning.repository.QcmRepository;
 import com.elearning.repository.UserRepository;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -165,14 +165,18 @@ public class DataInitializer implements ApplicationRunner {
         log.info("  Students: student@elearning.com | etudiant.diallo/fall/sarr/gueye/mbaye/toure/cisse/diouf/ndoye @elearning.com");
     }
 
-    private boolean isMysqlDatabase() {
-        try {
-            String version = jdbcTemplate.queryForObject("SELECT VERSION()", String.class);
-            return version != null && version.toLowerCase(Locale.ROOT).contains("mysql");
-        } catch (Exception ex) {
-            return false;
-        }
+private boolean isMysqlDatabase() {
+    try {
+        return Boolean.TRUE.equals(jdbcTemplate.execute((ConnectionCallback<Boolean>) con -> {
+            String product = con.getMetaData().getDatabaseProductName();
+            if (product == null) return false;
+            String p = product.toLowerCase(Locale.ROOT);
+            return p.contains("mysql") || p.contains("mariadb");
+        }));
+    } catch (Exception ex) {
+        return false;
     }
+}
 
     private boolean columnExists(String tableName, String columnName) {
         String sql = isMysqlDatabase()
