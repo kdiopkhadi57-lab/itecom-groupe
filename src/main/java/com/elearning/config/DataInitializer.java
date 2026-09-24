@@ -144,7 +144,59 @@ public class DataInitializer implements ApplicationRunner {
         log.info("  Students: student@elearning.com | etudiant.diallo/fall/sarr/gueye/mbaye/toure/cisse/diouf/ndoye @elearning.com");
     }
 
+    private boolean isMysqlDatabase() {
+        try {
+            String version = jdbcTemplate.queryForObject("SELECT VERSION()", String.class);
+            return version != null && version.toLowerCase(Locale.ROOT).contains("mysql");
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private boolean columnExists(String tableName, String columnName) {
+        String sql = isMysqlDatabase()
+            ? "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?"
+            : "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?";
+        Integer count = jdbcTemplate.queryForObject(sql, Integer.class, tableName, columnName);
+        return count != null && count > 0;
+    }
+
     private void ensureVirtualClassesTable() {
+        if (isMysqlDatabase()) {
+            jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS virtual_classes (
+                    id BIGINT NOT NULL AUTO_INCREMENT,
+                    title VARCHAR(255) NOT NULL,
+                    description TEXT,
+                    scheduled_at TIMESTAMP NULL,
+                    duration_minutes INT,
+                    room_name VARCHAR(255),
+                    recording_url VARCHAR(255),
+                    status VARCHAR(255),
+                    recording_data LONGTEXT,
+                    thumbnail_data LONGTEXT,
+                    recording_mime_type VARCHAR(255),
+                    recording_filename VARCHAR(255),
+                    teacher_id BIGINT,
+                    course_id BIGINT,
+                    created_at TIMESTAMP NULL,
+                    PRIMARY KEY (id)
+                ) ENGINE=InnoDB
+                """);
+            jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS virtual_class_students (
+                    id BIGINT NOT NULL AUTO_INCREMENT,
+                    virtual_class_id BIGINT NOT NULL,
+                    student_name VARCHAR(255) NOT NULL,
+                    student_email VARCHAR(255) NOT NULL,
+                    PRIMARY KEY (id),
+                    CONSTRAINT fk_virtual_class_students_virtual_class
+                        FOREIGN KEY (virtual_class_id) REFERENCES virtual_classes(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB
+                """);
+            return;
+        }
+
         jdbcTemplate.execute("""
             CREATE TABLE IF NOT EXISTS virtual_classes (
                 id BIGSERIAL PRIMARY KEY,
@@ -175,6 +227,29 @@ public class DataInitializer implements ApplicationRunner {
     }
 
     private void ensureQcmSchema() {
+        if (isMysqlDatabase()) {
+            ensureMysqlColumn("qcm_questions", "question_type", "VARCHAR(255)");
+            jdbcTemplate.execute("UPDATE qcm_questions SET question_type = 'QCM' WHERE question_type IS NULL");
+            jdbcTemplate.execute("ALTER TABLE qcm_questions MODIFY COLUMN question_type VARCHAR(255) NOT NULL DEFAULT 'QCM'");
+
+            ensureMysqlColumn("qcm_questions", "correction_data", "TEXT");
+            ensureMysqlColumn("qcm_questions", "case_scenario", "TEXT");
+            ensureMysqlColumn("qcm_questions", "expected_answer", "TEXT");
+
+            ensureMysqlColumn("qcms", "paper_correction_required", "BOOLEAN NOT NULL DEFAULT FALSE");
+            ensureMysqlColumn("qcm_passages", "paper_correction_url", "VARCHAR(255)");
+            ensureMysqlColumn("qcm_passages", "paper_correction_filename", "VARCHAR(255)");
+            ensureMysqlColumn("qcm_passages", "manual_score", "INTEGER");
+            ensureMysqlColumn("qcm_passages", "manual_correction_note", "TEXT");
+            ensureMysqlColumn("qcm_passages", "ocr_score", "INTEGER");
+            ensureMysqlColumn("qcm_passages", "ocr_correction_note", "TEXT");
+
+            ensureMysqlColumn("exam_questions", "question_type", "VARCHAR(255)");
+            jdbcTemplate.execute("UPDATE exam_questions SET question_type = 'QCM' WHERE question_type IS NULL");
+            jdbcTemplate.execute("ALTER TABLE exam_questions MODIFY COLUMN question_type VARCHAR(255) NOT NULL DEFAULT 'QCM'");
+            return;
+        }
+
         // Existing installations may predate the mixed-question and paper-copy fields.
         jdbcTemplate.execute("ALTER TABLE qcm_questions ADD COLUMN IF NOT EXISTS question_type VARCHAR(255)");
         jdbcTemplate.execute("UPDATE qcm_questions SET question_type = 'QCM' WHERE question_type IS NULL");
@@ -194,6 +269,12 @@ public class DataInitializer implements ApplicationRunner {
         jdbcTemplate.execute("UPDATE exam_questions SET question_type = 'QCM' WHERE question_type IS NULL");
         jdbcTemplate.execute("ALTER TABLE exam_questions ALTER COLUMN question_type SET DEFAULT 'QCM'");
         jdbcTemplate.execute("ALTER TABLE exam_questions ALTER COLUMN question_type SET NOT NULL");
+    }
+
+    private void ensureMysqlColumn(String tableName, String columnName, String columnDefinition) {
+        if (!columnExists(tableName, columnName)) {
+            jdbcTemplate.execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnDefinition);
+        }
     }
 
     private User ensureAccount(String email, String firstName, String lastName,
