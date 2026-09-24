@@ -1,9 +1,10 @@
 package com.elearning.config;
 
-import com.elearning.entity.*;
-import com.elearning.repository.*;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -11,9 +12,30 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.ArrayList;
+import com.elearning.entity.Book;
+import com.elearning.entity.Course;
+import com.elearning.entity.Exam;
+import com.elearning.entity.ExamQuestion;
+import com.elearning.entity.ExamStatus;
+import com.elearning.entity.ExamStudent;
+import com.elearning.entity.Lesson;
+import com.elearning.entity.Qcm;
+import com.elearning.entity.QcmChoice;
+import com.elearning.entity.QcmQuestion;
+import com.elearning.entity.QcmStudent;
+import com.elearning.entity.Role;
+import com.elearning.entity.StudentExamStatus;
+import com.elearning.entity.User;
+import com.elearning.repository.BookRepository;
+import com.elearning.repository.CourseRepository;
+import com.elearning.repository.ExamRepository;
+import com.elearning.repository.ExamStudentRepository;
+import com.elearning.repository.QcmPassageRepository;
+import com.elearning.repository.QcmRepository;
+import com.elearning.repository.UserRepository;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Component
 @RequiredArgsConstructor
