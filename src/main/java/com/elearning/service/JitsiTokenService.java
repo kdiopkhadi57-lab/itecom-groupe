@@ -64,12 +64,14 @@ public class JitsiTokenService {
         Map<String, Object> context = Map.of("user", user, "features", features);
         return Jwts.builder()
             .setHeaderParam("kid", normalizedKeyId())
+            .setHeaderParam("typ", "JWT")
             .setAudience("jitsi")
             .setIssuer("chat")
             .setSubject(appId)
             .claim("room", "*")
             .claim("context", context)
-            .setNotBefore(Date.from(now.minusSeconds(5)))
+            .setIssuedAt(Date.from(now))
+            .setNotBefore(Date.from(now.minusSeconds(60)))
             .setExpiration(Date.from(now.plusSeconds(3600)))
             .signWith(readPrivateKey(), SignatureAlgorithm.RS256)
             .compact();
