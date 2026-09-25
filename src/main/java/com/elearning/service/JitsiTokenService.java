@@ -53,9 +53,15 @@ public class JitsiTokenService {
         user.put("id", String.valueOf(userId));
         user.put("name", name);
         user.put("email", email);
-        user.put("moderator", moderator);
+        user.put("moderator", String.valueOf(moderator));
 
-        Map<String, Object> context = Map.of("user", user);
+        // JaaS refuse le jeton si l'objet "features" est absent du contexte
+        Map<String, Object> features = Map.of(
+            "livestreaming", String.valueOf(moderator),
+            "recording", String.valueOf(moderator),
+            "transcription", String.valueOf(moderator),
+            "outbound-call", "false");
+        Map<String, Object> context = Map.of("user", user, "features", features);
         return Jwts.builder()
             .setHeaderParam("kid", normalizedKeyId())
             .setAudience("jitsi")
