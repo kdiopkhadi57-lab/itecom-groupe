@@ -219,6 +219,9 @@ private boolean isMysqlDatabase() {
                         FOREIGN KEY (virtual_class_id) REFERENCES virtual_classes(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB
                 """);
+            // Les tables créées avant ce code avaient des colonnes TEXT (64 Ko max), trop petites pour une vidéo
+            ensureMysqlColumnType("virtual_classes", "recording_data", "longtext", "LONGTEXT");
+            ensureMysqlColumnType("virtual_classes", "thumbnail_data", "longtext", "LONGTEXT");
             return;
         }
 
@@ -294,6 +297,18 @@ private boolean isMysqlDatabase() {
         jdbcTemplate.execute("UPDATE exam_questions SET question_type = 'QCM' WHERE question_type IS NULL");
         jdbcTemplate.execute("ALTER TABLE exam_questions ALTER COLUMN question_type SET DEFAULT 'QCM'");
         jdbcTemplate.execute("ALTER TABLE exam_questions ALTER COLUMN question_type SET NOT NULL");
+    }
+
+    private void ensureMysqlColumnType(String tableName, String columnName, String dataType, String columnDefinition) {
+        String currentType = jdbcTemplate.query(
+            "SELECT data_type FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+            rs -> rs.next() ? rs.getString(1) : null, tableName, columnName);
+        if (currentType == null) {
+            jdbcTemplate.execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnDefinition);
+        } else if (!currentType.equalsIgnoreCase(dataType)) {
+            log.info("Migration {}.{} : {} -> {}", tableName, columnName, currentType, columnDefinition);
+            jdbcTemplate.execute("ALTER TABLE " + tableName + " MODIFY COLUMN " + columnName + " " + columnDefinition);
+        }
     }
 
     private void ensureMysqlColumn(String tableName, String columnName, String columnDefinition) {
