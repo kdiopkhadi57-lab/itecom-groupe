@@ -130,8 +130,29 @@ public class JitsiTokenService {
             }
             return KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(der));
         } catch (Exception exception) {
-            throw new IllegalStateException("La clé privée JaaS doit être une clé RSA PKCS#8 PEM valide", exception);
+            throw new IllegalStateException("Clé privée JaaS invalide (" + describeKey(keyValue) + ", cause : "
+                + exception.getClass().getSimpleName() + " " + exception.getMessage()
+                + "). Mettez dans JAAS_PRIVATE_KEY le fichier .pk téléchargé depuis JaaS, en PEM ou encodé en base64.",
+                exception);
         }
+    }
+
+    /** Décrit la valeur configurée sans révéler la clé, pour le diagnostic. */
+    private String describeKey(String keyValue) {
+        String trimmed = keyValue.trim();
+        String format;
+        if (trimmed.contains("-----BEGIN RSA PRIVATE KEY-----")) {
+            format = "PEM PKCS#1";
+        } else if (trimmed.contains("-----BEGIN PRIVATE KEY-----")) {
+            format = "PEM PKCS#8";
+        } else if (trimmed.contains("-----BEGIN")) {
+            format = "PEM de type inattendu";
+        } else if (decodeBase64Text(trimmed) != null) {
+            format = "base64 sans en-tête PEM";
+        } else {
+            format = "format inconnu";
+        }
+        return "format détecté : " + format + ", longueur : " + trimmed.length() + " caractères";
     }
 
     private String decodeBase64Text(String value) {
