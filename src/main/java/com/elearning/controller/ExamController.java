@@ -65,26 +65,27 @@ public class ExamController {
             headerStyle.setFillForegroundColor(IndexedColors.CORNFLOWER_BLUE.getIndex());
             headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
 
-            // En-tête
+            // En-tête : Nom | Prénom | Niveau | Email | Mot de passe (unique pour chaque étudiant)
+            String[] headers = {"Nom", "Prénom", "Niveau", "Email", "Mot de passe"};
             Row header = sheet.createRow(0);
-            Cell h1 = header.createCell(0); h1.setCellValue("Nom complet"); h1.setCellStyle(headerStyle);
-            Cell h2 = header.createCell(1); h2.setCellValue("Email");       h2.setCellStyle(headerStyle);
+            for (int i = 0; i < headers.length; i++) {
+                Cell cell = header.createCell(i);
+                cell.setCellValue(headers[i]);
+                cell.setCellStyle(headerStyle);
+            }
 
             // Exemples
-            Row r1 = sheet.createRow(1);
-            r1.createCell(0).setCellValue("Moussa Ndiaye");
-            r1.createCell(1).setCellValue("moussa.ndiaye@etudiant.com");
+            String[][] examples = {
+                {"Ndiaye", "Moussa", "L3", "moussa.ndiaye@etudiant.com", "Mn7xK2pa"},
+                {"Diallo", "Fatou", "L3", "fatou.diallo@etudiant.com", "Fd4qR9tz"},
+                {"Seck", "Ibrahima", "M1", "ibrahima.seck@etudiant.com", "Is8wH3nb"},
+            };
+            for (int r = 0; r < examples.length; r++) {
+                Row row = sheet.createRow(r + 1);
+                for (int c = 0; c < examples[r].length; c++) row.createCell(c).setCellValue(examples[r][c]);
+            }
 
-            Row r2 = sheet.createRow(2);
-            r2.createCell(0).setCellValue("Fatou Diallo");
-            r2.createCell(1).setCellValue("fatou.diallo@etudiant.com");
-
-            Row r3 = sheet.createRow(3);
-            r3.createCell(0).setCellValue("Ibrahima Seck");
-            r3.createCell(1).setCellValue("ibrahima.seck@etudiant.com");
-
-            sheet.autoSizeColumn(0);
-            sheet.autoSizeColumn(1);
+            for (int i = 0; i < headers.length; i++) sheet.autoSizeColumn(i);
 
             wb.write(out);
             byte[] bytes = out.toByteArray();

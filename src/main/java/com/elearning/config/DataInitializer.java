@@ -271,6 +271,11 @@ private boolean isMysqlDatabase() {
             ensureMysqlColumn("qcm_passages", "manual_correction_note", "TEXT");
             ensureMysqlColumn("qcm_passages", "ocr_score", "INTEGER");
             ensureMysqlColumn("qcm_passages", "ocr_correction_note", "TEXT");
+            ensureMysqlColumn("qcm_reponses", "text_answer", "TEXT");
+            ensureMysqlColumn("qcm_students", "first_name", "VARCHAR(255)");
+            ensureMysqlColumn("qcm_students", "last_name", "VARCHAR(255)");
+            ensureMysqlColumn("qcm_students", "student_level", "VARCHAR(255)");
+            ensureMysqlColumn("qcm_students", "access_password", "VARCHAR(255)");
 
             ensureMysqlColumn("exam_questions", "question_type", "VARCHAR(255)");
             jdbcTemplate.execute("UPDATE exam_questions SET question_type = 'QCM' WHERE question_type IS NULL");
@@ -293,6 +298,11 @@ private boolean isMysqlDatabase() {
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS manual_correction_note TEXT");
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS ocr_score INTEGER");
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS ocr_correction_note TEXT");
+        jdbcTemplate.execute("ALTER TABLE qcm_reponses ADD COLUMN IF NOT EXISTS text_answer TEXT");
+        jdbcTemplate.execute("ALTER TABLE qcm_students ADD COLUMN IF NOT EXISTS first_name VARCHAR(255)");
+        jdbcTemplate.execute("ALTER TABLE qcm_students ADD COLUMN IF NOT EXISTS last_name VARCHAR(255)");
+        jdbcTemplate.execute("ALTER TABLE qcm_students ADD COLUMN IF NOT EXISTS student_level VARCHAR(255)");
+        jdbcTemplate.execute("ALTER TABLE qcm_students ADD COLUMN IF NOT EXISTS access_password VARCHAR(255)");
         jdbcTemplate.execute("ALTER TABLE exam_questions ADD COLUMN IF NOT EXISTS question_type VARCHAR(255)");
         jdbcTemplate.execute("UPDATE exam_questions SET question_type = 'QCM' WHERE question_type IS NULL");
         jdbcTemplate.execute("ALTER TABLE exam_questions ALTER COLUMN question_type SET DEFAULT 'QCM'");

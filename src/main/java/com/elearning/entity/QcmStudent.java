@@ -22,4 +22,14 @@ public class QcmStudent {
 
     @Column(nullable = false)
     private String studentEmail;
+
+    private String firstName;
+
+    private String lastName;
+
+    @Column(name = "student_level")
+    private String level;
+
+    // Mot de passe d'accès au devoir, propre à chaque étudiant (unique dans un même devoir)
+    private String accessPassword;
 }

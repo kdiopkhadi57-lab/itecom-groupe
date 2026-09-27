@@ -24,6 +24,10 @@ public class QcmReponse {
     @JoinColumn(name = "choice_id")
     private QcmChoice choiceSelected;
 
+    // Réponse rédigée par l'étudiant (cas pratique, réponse longue)
+    @Column(columnDefinition = "TEXT")
+    private String textAnswer;
+
     // Calculé lors de la soumission
     @Builder.Default
     private Boolean isCorrect = false;
