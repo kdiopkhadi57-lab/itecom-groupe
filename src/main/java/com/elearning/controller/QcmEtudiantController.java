@@ -16,11 +16,10 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import com.elearning.service.FileStorageService;
 import com.elearning.service.QcmCaseOcrGradingService;
+import com.elearning.service.CorrectionComparisonService;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -38,7 +37,7 @@ public class QcmEtudiantController {
     private final ObjectMapper objectMapper;
     private final FileStorageService fileStorageService;
     private final QcmCaseOcrGradingService caseOcrGradingService;
-    private static final Pattern NUMBER_PATTERN = Pattern.compile("(?<![A-Za-z])[-+]?\\d[\\d .]*?(?:,\\d+|\\.\\d+)?(?=\\s*(?:FCFA|%|$))", Pattern.CASE_INSENSITIVE);
+    private final CorrectionComparisonService comparisonService;
 
     private static final int DEFAULT_ESTIMATED_DURATION_MINUTES = 30;
 
@@ -190,6 +189,8 @@ public class QcmEtudiantController {
                     .expectedAnswer(qcm.getCorrectionText() == null || qcm.getCorrectionText().isBlank() ? "Référence de correction fournie par le professeur." : qcm.getCorrectionText())
                     .choices(new ArrayList<>())
                     .build());
+                // Sans identifiant, la réponse saisie par l'étudiant ne pourrait pas être rattachée à la question
+                qcmRepo.saveAndFlush(qcm);
             }
         }
         dto.questions = qcm.getQuestions().stream().map(q -> {
@@ -232,10 +233,14 @@ public class QcmEtudiantController {
             passage.setPaperCorrectionUrl(url);
             passage.setPaperCorrectionFilename(file.getOriginalFilename());
             passageRepo.save(passage);
-            if (hasPaperCase(qcm)) {
-                QcmCaseOcrGradingService.GradeResult grade = caseOcrGradingService.grade(qcm, List.of(
-                    new QcmCaseOcrGradingService.ScannedFile(file.getBytes(), file.getContentType(), file.getOriginalFilename())
-                ));
+            QcmCaseOcrGradingService.ScannedFile scanned =
+                new QcmCaseOcrGradingService.ScannedFile(file.getBytes(), file.getContentType(), file.getOriginalFilename());
+            if (!hasPaperCase(qcm)) {
+                passage.setOcrExtractedText(caseOcrGradingService.transcribe(List.of(scanned)));
+                passageRepo.save(passage);
+            } else {
+                QcmCaseOcrGradingService.GradeResult grade = caseOcrGradingService.grade(qcm, List.of(scanned));
+                passage.setOcrExtractedText(grade.extractedText());
                 passage.setOcrScore(grade.score());
                 passage.setOcrCorrectionNote(grade.comment());
                 passage.setScore(grade.score());
@@ -283,7 +288,8 @@ public class QcmEtudiantController {
         passage.setDocumentAnswer(input.documentAnswer);
 
         // Pas de copie scannée : on corrige le cas pratique à partir de la réponse saisie
-        if (!hasPaperCopy && allCasesTyped && passage.getOcrScore() == null) {
+        if (!hasPaperCopy && allCasesTyped && passage.getOcrScore() == null
+                && qcm.getQuestions().stream().filter(this::isPaperCase).allMatch(q -> expectedFor(q, qcm).isEmpty())) {
             Map<Long, String> typed = qcm.getQuestions().stream().filter(this::isPaperCase)
                 .collect(Collectors.toMap(QcmQuestion::getId, q -> textAnswerOf(responseMap.get(q.getId()))));
             QcmCaseOcrGradingService.GradeResult grade = caseOcrGradingService.gradeTypedAnswers(qcm, typed);
@@ -294,13 +300,13 @@ public class QcmEtudiantController {
         int score = 0, maxScore = 0;
         passage.getReponses().clear();
 
+        List<String> comparisonReports = new ArrayList<>();
         if (qcm.getQuestions().isEmpty()) {
-            List<Double> expected = extractDocumentCorrectionValues(qcm.getCorrectionText());
-            List<Double> submitted = extractDocumentAnswerValues(input.documentAnswer);
-            maxScore = expected.size();
-            for (int i = 0; i < expected.size(); i++) {
-                if (i < submitted.size() && closeEnough(expected.get(i), submitted.get(i))) score++;
-            }
+            var expected = comparisonService.expectedValues(qcm.getCorrectionText(), qcm.getSubjectText());
+            var result = comparisonService.compare(expected, joinTexts(input.documentAnswer, passage.getOcrExtractedText()));
+            score = result.matched();
+            maxScore = result.total();
+            if (!expected.isEmpty()) comparisonReports.add(result.report());
         }
 
         for (QcmQuestion question : qcm.getQuestions()) {
@@ -319,7 +325,18 @@ public class QcmEtudiantController {
                 : "PRACTICAL".equals(question.getQuestionType())
                 ? practicalRatio >= 0.999
                 : chosen != null && Boolean.TRUE.equals(chosen.getIsCorrect());
-            if (paperCase) {
+            var expectedValues = paperCase ? expectedFor(question, qcm) : List.<CorrectionComparisonService.ExpectedValue>of();
+            if (paperCase && !expectedValues.isEmpty()) {
+                // Comparaison de chaque chiffre de la correction avec la réponse saisie et la copie scannée
+                var result = comparisonService.compare(expectedValues,
+                    joinTexts(textAnswerOf(response), passage.getOcrExtractedText()));
+                score += (int) Math.round(question.getPoints() * result.ratio());
+                correct = result.matched() == result.total();
+                comparisonReports.add(result.report());
+                if (hasPaperCopy && (passage.getOcrExtractedText() == null || passage.getOcrExtractedText().isBlank())) {
+                    comparisonReports.add("Transcription de la copie scannée indisponible : vérifiez la copie manuellement.");
+                }
+            } else if (paperCase) {
                 score += ocrScoreForQuestion(passage, question, qcm);
             } else if ("PRACTICAL".equals(question.getQuestionType())) {
                 score += (int) Math.round(question.getPoints() * practicalRatio);
@@ -334,6 +351,11 @@ public class QcmEtudiantController {
                 .choiceSelected(chosen).textAnswer(typedAnswer).isCorrect(correct).build());
         }
 
+        if (!comparisonReports.isEmpty()) {
+            String aiNote = passage.getOcrCorrectionNote();
+            passage.setOcrCorrectionNote(String.join("\n\n", comparisonReports)
+                + (aiNote == null || aiNote.isBlank() ? "" : "\n\nAvis de l'IA : " + aiNote));
+        }
         passage.setScore(score);
         passage.setMaxScore(maxScore > 0 ? maxScore : 1);
         passage.setIsSubmitted(true);
@@ -341,6 +363,27 @@ public class QcmEtudiantController {
         passageRepo.save(passage);
 
         return ResponseEntity.ok(buildResultat(passage, qcm));
+    }
+
+    private static final String PLACEHOLDER_ANSWER = "Référence de correction fournie par le professeur.";
+
+    /** Valeurs attendues pour une question « cas pratique » : sa correction propre, sinon celle du devoir. */
+    private List<CorrectionComparisonService.ExpectedValue> expectedFor(QcmQuestion question, Qcm qcm) {
+        String correction = firstNonBlank(
+            PLACEHOLDER_ANSWER.equals(question.getExpectedAnswer()) ? null : question.getExpectedAnswer(),
+            question.getCorrectionData(), qcm.getCorrectionText());
+        String subject = firstNonBlank(qcm.getSubjectText(), question.getQuestionText());
+        return comparisonService.expectedValues(correction, subject);
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String v : values) if (v != null && !v.isBlank()) return v;
+        return null;
+    }
+
+    private static String joinTexts(String... texts) {
+        return java.util.Arrays.stream(texts).filter(t -> t != null && !t.isBlank())
+            .collect(Collectors.joining("\n"));
     }
 
     private String textAnswerOf(ReponseInput response) {
@@ -370,45 +413,13 @@ public class QcmEtudiantController {
                     && question.getCaseScenario() != null && !question.getCaseScenario().isBlank()));
     }
 
-    private List<Double> extractDocumentCorrectionValues(String correctionText) {
-        List<Double> values = new ArrayList<>();
-        if (correctionText == null) return values;
-        for (String line : correctionText.split("\\R")) {
-            String[] cells = line.split("\\t");
-            String candidate = cells.length > 2 ? cells[2] : line;
-            Matcher matcher = NUMBER_PATTERN.matcher(candidate);
-            if (matcher.find()) values.add(parseDocumentNumber(matcher.group()));
-        }
-        return values;
-    }
-
-    private List<Double> extractDocumentAnswerValues(String answer) {
-        List<Double> values = new ArrayList<>();
-        if (answer == null) return values;
-        Matcher matcher = NUMBER_PATTERN.matcher(answer);
-        while (matcher.find()) values.add(parseDocumentNumber(matcher.group()));
-        return values;
-    }
-
-    private double parseDocumentNumber(String value) {
-        String normalized = value.replace(" ", "").replace(".", "").replace(',', '.');
-        return Double.parseDouble(normalized);
-    }
-
-    private boolean closeEnough(double expected, double actual) {
-        return Math.abs(expected - actual) <= Math.max(0.001, Math.abs(expected) * 0.001);
-    }
-
     private void refreshDocumentScore(QcmPassage passage, Qcm qcm) {
-        if (!qcm.getQuestions().isEmpty() || passage.getDocumentAnswer() == null) return;
-        List<Double> expected = extractDocumentCorrectionValues(qcm.getCorrectionText());
-        List<Double> submitted = extractDocumentAnswerValues(passage.getDocumentAnswer());
-        int score = 0;
-        for (int i = 0; i < expected.size(); i++) {
-            if (i < submitted.size() && closeEnough(expected.get(i), submitted.get(i))) score++;
-        }
-        passage.setScore(score);
-        passage.setMaxScore(expected.isEmpty() ? 1 : expected.size());
+        if (!qcm.getQuestions().isEmpty() || passage.getManualScore() != null) return;
+        var expected = comparisonService.expectedValues(qcm.getCorrectionText(), qcm.getSubjectText());
+        if (expected.isEmpty()) return;
+        var result = comparisonService.compare(expected, joinTexts(passage.getDocumentAnswer(), passage.getOcrExtractedText()));
+        passage.setScore(result.matched());
+        passage.setMaxScore(result.total());
         passageRepo.save(passage);
     }
 
@@ -524,6 +535,10 @@ public class QcmEtudiantController {
     private String resolveChoiceLabel(QcmReponse rep, QcmPassage passage) {
         if (rep.getChoiceSelected() != null) {
             return rep.getChoiceSelected().getChoiceText();
+        }
+        if (rep.getTextAnswer() != null && !rep.getTextAnswer().isBlank()) {
+            return passage != null && passage.getPaperCorrectionUrl() != null && !passage.getPaperCorrectionUrl().isBlank()
+                ? "Réponse saisie + copie scannée" : "Réponse saisie";
         }
         if (isPaperCase(rep.getQuestion())) {
             if (passage != null && passage.getPaperCorrectionUrl() != null && !passage.getPaperCorrectionUrl().isBlank()) {

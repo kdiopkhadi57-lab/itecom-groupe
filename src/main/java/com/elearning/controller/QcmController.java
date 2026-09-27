@@ -377,8 +377,11 @@ public class QcmController {
             Qcm qcm = qcmRepo.findById(id).orElseThrow();
             qcm.setSubjectFileUrl(fileStorageService.store(subjectFile, "devoirs/sujets"));
             qcm.setCorrectionFileUrl(fileStorageService.store(correctionFile, "devoirs/corrections"));
-            qcm.setSubjectText(documentTextExtractorService.extractText(subjectFile));
-            qcm.setCorrectionText(documentTextExtractorService.extractText(correctionFile));
+            // Mise en page d'origine conservée (retours à la ligne, tableaux) pour l'affichage et la correction
+            String previousSubject = qcm.getSubjectText();
+            qcm.setSubjectText(documentTextExtractorService.extractLayoutText(subjectFile));
+            qcm.setCorrectionText(documentTextExtractorService.extractLayoutText(correctionFile));
+            refreshDocumentCaseQuestion(qcm, previousSubject);
             ensureDocumentCaseQuestion(qcm);
             return ResponseEntity.ok(toQcmDto(qcmRepo.save(qcm), true));
         } catch (Exception e) {
@@ -404,19 +407,39 @@ public class QcmController {
             qcm.setQuestions(new ArrayList<>());
         }
 
+        // Le sujet complet, sans troncature : il est affiché tel quel à l'étudiant
         QcmQuestion question = QcmQuestion.builder()
             .qcm(qcm)
-            .questionText(subjectText.length() > 2000 ? subjectText.substring(0, 2000).trim() : subjectText)
+            .questionText(subjectText)
             .points(10)
             .orderIndex(qcm.getQuestions().size())
             .questionType("CASE")
-            .caseScenario(subjectText.length() > 500 ? subjectText.substring(0, 500).trim() : subjectText)
             .correctionData(correctionText)
             .expectedAnswer(correctionText.isBlank() ? "Référence de correction fournie par le professeur." : correctionText)
             .choices(new ArrayList<>())
             .build();
 
         qcm.getQuestions().add(question);
+    }
+
+    /**
+     * Met à jour la question « cas pratique » générée à partir d'anciens documents
+     * (texte aplati ou tronqué) avec le sujet et la correction nouvellement extraits.
+     */
+    public static void refreshDocumentCaseQuestion(Qcm qcm, String previousSubject) {
+        if (qcm == null || qcm.getQuestions() == null || qcm.getSubjectText() == null
+                || previousSubject == null || previousSubject.isBlank()) return;
+        // La question générée reprenait le début de l'ancien sujet (tronqué à 2000 caractères)
+        String head = previousSubject.trim().substring(0, Math.min(200, previousSubject.trim().length()));
+        for (QcmQuestion q : qcm.getQuestions()) {
+            if (!"CASE".equalsIgnoreCase(q.getQuestionType()) || !q.getChoices().isEmpty()) continue;
+            if (q.getQuestionText() == null || !q.getQuestionText().trim().startsWith(head)) continue;
+            q.setQuestionText(qcm.getSubjectText());
+            q.setCaseScenario(null);
+            String correction = qcm.getCorrectionText() == null ? "" : qcm.getCorrectionText().trim();
+            q.setCorrectionData(correction);
+            q.setExpectedAnswer(correction.isBlank() ? "Référence de correction fournie par le professeur." : correction);
+        }
     }
 
     // ── Ajouter des étudiants à un QCM existant ───────────────────────────

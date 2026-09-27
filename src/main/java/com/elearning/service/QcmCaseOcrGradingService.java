@@ -56,6 +56,29 @@ public class QcmCaseOcrGradingService {
         }
     }
 
+    /** Transcription seule d'une copie scannée (devoir sans question « cas pratique »). */
+    public String transcribe(List<ScannedFile> studentFiles) {
+        if (client == null || studentFiles.isEmpty()) return "";
+        List<ContentBlockParam> content = new ArrayList<>();
+        content.add(ContentBlockParam.ofText(TextBlockParam.builder().text("""
+            Transcris fidèlement la copie d'étudiant jointe (texte, calculs, tableaux ligne par ligne avec les colonnes séparées par « | »).
+            Recopie tous les chiffres exactement comme ils sont écrits. N'invente rien : écris [illisible] si nécessaire.
+            Retourne uniquement la transcription.
+            """).build()));
+        for (ScannedFile file : studentFiles) content.add(toContentBlock(file));
+        try {
+            MessageCreateParams params = MessageCreateParams.builder()
+                .model(Model.of(model)).maxTokens(10000L)
+                .addUserMessageOfBlockParams(content).build();
+            Message response = client.messages().create(params);
+            return response.content().stream().flatMap(block -> block.text().stream())
+                .map(TextBlock::text).findFirst().orElse("");
+        } catch (Exception e) {
+            log.error("Erreur de transcription de copie : {}", e.getMessage());
+            return "";
+        }
+    }
+
     /** Correction du cas pratique à partir de la réponse rédigée dans la zone de saisie (sans copie scannée). */
     public GradeResult gradeTypedAnswers(Qcm qcm, Map<Long, String> answersByQuestionId) {
         List<QcmQuestion> caseQuestions = qcm.getQuestions().stream()
@@ -128,7 +151,7 @@ public class QcmCaseOcrGradingService {
         for (QcmQuestion q : questions) {
             prompt.append("\nQUESTION ID ").append(q.getId()).append(" (" ).append(q.getPoints()).append(" points)\n")
                 .append("Enoncé: ").append(q.getQuestionText()).append("\n")
-                .append("Cas: ").append(q.getCaseScenario()).append("\n")
+                .append(q.getCaseScenario() == null || q.getCaseScenario().isBlank() ? "" : "Cas: " + q.getCaseScenario() + "\n")
                 .append("Réponse attendue/grille: ").append(q.getExpectedAnswer()).append("\n")
                 .append("Correction structurée: ").append(q.getCorrectionData()).append("\n");
         }
@@ -136,6 +159,7 @@ public class QcmCaseOcrGradingService {
 
             Retourne uniquement un JSON valide :
             {"score": <entier total>, "extractedText": "<transcription structurée du texte et des tableaux>", "comment": "<commentaire détaillé en français>"}
+            Recopie dans extractedText tous les chiffres exactement comme l'étudiant les a écrits.
             Note selon la justesse des calculs, du raisonnement, des concepts juridiques/linguistiques et des unités. Compare les tableaux cellule par cellule quand ils existent.
             Le score total doit être compris entre 0 et le total des points des questions papier.
             """).toString();

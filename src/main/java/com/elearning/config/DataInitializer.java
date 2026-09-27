@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.ConnectionCallback;
@@ -33,6 +34,7 @@ import com.elearning.repository.ExamStudentRepository;
 import com.elearning.repository.QcmPassageRepository;
 import com.elearning.repository.QcmRepository;
 import com.elearning.repository.UserRepository;
+import com.elearning.service.DocumentTextExtractorService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -50,12 +52,17 @@ public class DataInitializer implements ApplicationRunner {
     private final QcmPassageRepository qcmPassageRepository;
     private final PasswordEncoder passwordEncoder;
     private final JdbcTemplate jdbcTemplate;
+    private final DocumentTextExtractorService documentTextExtractorService;
+
+    @Value("${app.upload.dir}")
+    private String uploadDir;
 
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
         ensureQcmSchema();
         ensureVirtualClassesTable();
+        reextractFlattenedDevoirDocuments();
 
         // ── Comptes administrateur ────────────────────────────────────────────
         User admin = ensureAccount("admin@elearning.com", "Admin", "ELearning",
@@ -254,6 +261,38 @@ private boolean isMysqlDatabase() {
             """);
     }
 
+    /**
+     * Les sujets / corrections importés avant l'extraction « mise en page » ont perdu leurs retours
+     * à la ligne. On les réextrait depuis les fichiers d'origine quand ils sont encore sur le disque.
+     */
+    private void reextractFlattenedDevoirDocuments() {
+        for (Qcm qcm : qcmRepository.findAll()) {
+            String subject = qcm.getSubjectText();
+            if (subject == null || subject.isBlank()) continue;
+            try {
+                String newSubject = extractStored(qcm.getSubjectFileUrl());
+                if (newSubject == null || newSubject.equals(subject)) continue;
+                String newCorrection = extractStored(qcm.getCorrectionFileUrl());
+                qcm.setSubjectText(newSubject);
+                if (newCorrection != null) qcm.setCorrectionText(newCorrection);
+                com.elearning.controller.QcmController.refreshDocumentCaseQuestion(qcm, subject);
+                qcmRepository.save(qcm);
+                log.info("Devoir #{} : sujet et correction réextraits avec leur mise en page", qcm.getId());
+            } catch (Exception e) {
+                log.warn("Devoir #{} : réextraction impossible ({})", qcm.getId(), e.getMessage());
+            }
+        }
+    }
+
+    private String extractStored(String url) throws java.io.IOException {
+        if (url == null || !url.startsWith("/uploads/")) return null;
+        java.nio.file.Path path = java.nio.file.Paths.get(uploadDir, url.substring("/uploads/".length()))
+            .toAbsolutePath().normalize();
+        if (!java.nio.file.Files.isRegularFile(path)) return null;
+        return documentTextExtractorService.extractLayoutText(path.getFileName().toString(),
+            java.nio.file.Files.readAllBytes(path));
+    }
+
     private void ensureQcmSchema() {
         if (isMysqlDatabase()) {
             ensureMysqlColumn("qcm_questions", "question_type", "VARCHAR(255)");
@@ -272,6 +311,7 @@ private boolean isMysqlDatabase() {
             ensureMysqlColumn("qcm_passages", "ocr_score", "INTEGER");
             ensureMysqlColumn("qcm_passages", "ocr_correction_note", "TEXT");
             ensureMysqlColumn("qcm_reponses", "text_answer", "TEXT");
+            ensureMysqlColumn("qcm_passages", "ocr_extracted_text", "TEXT");
             ensureMysqlColumn("qcm_students", "first_name", "VARCHAR(255)");
             ensureMysqlColumn("qcm_students", "last_name", "VARCHAR(255)");
             ensureMysqlColumn("qcm_students", "student_level", "VARCHAR(255)");
@@ -299,6 +339,7 @@ private boolean isMysqlDatabase() {
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS ocr_score INTEGER");
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS ocr_correction_note TEXT");
         jdbcTemplate.execute("ALTER TABLE qcm_reponses ADD COLUMN IF NOT EXISTS text_answer TEXT");
+        jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS ocr_extracted_text TEXT");
         jdbcTemplate.execute("ALTER TABLE qcm_students ADD COLUMN IF NOT EXISTS first_name VARCHAR(255)");
         jdbcTemplate.execute("ALTER TABLE qcm_students ADD COLUMN IF NOT EXISTS last_name VARCHAR(255)");
         jdbcTemplate.execute("ALTER TABLE qcm_students ADD COLUMN IF NOT EXISTS student_level VARCHAR(255)");

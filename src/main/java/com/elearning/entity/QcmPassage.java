@@ -51,6 +51,10 @@ public class QcmPassage {
     @Column(columnDefinition = "TEXT")
     private String ocrCorrectionNote;
 
+    // Transcription (OCR) de la copie scannée, comparée chiffre par chiffre à la correction
+    @Column(columnDefinition = "TEXT")
+    private String ocrExtractedText;
+
     // Exclusion pour violations répétées du mode plein écran (anti-triche)
     @Builder.Default
     private Boolean excludedForViolations = false;
