@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @Slf4j
@@ -51,6 +52,41 @@ public class QcmCaseOcrGradingService {
             return parse(raw, maxScore);
         } catch (Exception e) {
             log.error("Erreur correction OCR du devoir {}: {}", qcm.getId(), e.getMessage());
+            return new GradeResult(0, maxScore, "La correction automatique a échoué : correction manuelle requise.", "");
+        }
+    }
+
+    /** Correction du cas pratique à partir de la réponse rédigée dans la zone de saisie (sans copie scannée). */
+    public GradeResult gradeTypedAnswers(Qcm qcm, Map<Long, String> answersByQuestionId) {
+        List<QcmQuestion> caseQuestions = qcm.getQuestions().stream()
+            .filter(this::isPaperCase)
+            .toList();
+        int maxScore = caseQuestions.stream().mapToInt(QcmQuestion::getPoints).sum();
+        if (caseQuestions.isEmpty()) return new GradeResult(0, 0, "Aucun cas pratique à corriger.", "");
+        if (client == null) return new GradeResult(0, maxScore, "Correction IA indisponible : correction manuelle requise.", "");
+
+        StringBuilder prompt = new StringBuilder(buildPrompt(qcm, caseQuestions)
+            .replace("Les fichiers joints sont les pages manuscrites ou imprimées de la réponse d'un étudiant.",
+                "La réponse de l'étudiant a été saisie au clavier et figure ci-dessous (aucun fichier joint).")
+            .replace("Utilise une lecture OCR/vision complète : lis le texte hors tableau, les tableaux, cellules, colonnes, lignes, unités, signes mathématiques, ratures et annotations.",
+                "Lis attentivement le texte saisi, y compris les tableaux éventuellement tapés en texte."));
+        prompt.append("\nREPONSE SAISIE PAR L'ETUDIANT:\n");
+        for (QcmQuestion q : caseQuestions) {
+            String answer = answersByQuestionId.get(q.getId());
+            prompt.append("\nQUESTION ID ").append(q.getId()).append(":\n")
+                .append(answer == null || answer.isBlank() ? "(pas de réponse)" : answer).append("\n");
+        }
+
+        try {
+            MessageCreateParams params = MessageCreateParams.builder()
+                .model(Model.of(model)).maxTokens(10000L)
+                .addUserMessage(prompt.toString()).build();
+            Message response = client.messages().create(params);
+            String raw = response.content().stream().flatMap(block -> block.text().stream())
+                .map(TextBlock::text).findFirst().orElse("{}");
+            return parse(raw, maxScore);
+        } catch (Exception e) {
+            log.error("Erreur correction du cas pratique saisi, devoir {}: {}", qcm.getId(), e.getMessage());
             return new GradeResult(0, maxScore, "La correction automatique a échoué : correction manuelle requise.", "");
         }
     }

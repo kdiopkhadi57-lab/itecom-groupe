@@ -62,6 +62,9 @@ public class QcmEtudiantController {
     @Data static class QcmListDto   { Long id; String title; String description; String professorName; int questionCount; boolean alreadyTaken; String createdAt; Integer score; Integer maxScore; }
     @Data static class QcmTakeDto   { Long id; String title; String description; String subjectFileUrl; String subjectText; Long passageId; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String paperCorrectionUrl; String paperCorrectionFilename; String startedAt; List<QuestionDto> questions; }
 
+    @Data static class AccesDto     { Long id; String title; String description; Integer estimatedDurationMinutes; int questionCount; boolean passwordRequired; String studentName; String studentLevel; }
+    @Data static class CommencerInput { String password; }
+
     @Data static class SoumettreInput { List<ReponseInput> reponses; String documentAnswer; }
     @Data static class ReponseInput   { Long questionId; Long choiceId; Map<String, String> values; }
 
@@ -106,15 +109,58 @@ public class QcmEtudiantController {
         return ResponseEntity.ok(list);
     }
 
+    private java.util.Optional<QcmStudent> findAssignment(Qcm qcm, User student) {
+        return qcm.getAssignedStudents().stream()
+            .filter(s -> s.getStudentEmail().equalsIgnoreCase(student.getEmail()))
+            .findFirst();
+    }
+
+    // ── Informations avant de commencer (écran d'accueil) ─────────────────
+
+    @GetMapping("/{id}/acces")
+    @Transactional(readOnly = true)
+    public ResponseEntity<?> acces(@PathVariable Long id, Authentication auth) {
+        User student = userRepo.findByEmail(auth.getName()).orElseThrow();
+        Qcm qcm = qcmRepo.findById(id).orElseThrow();
+        if (!"PUBLISHED".equals(qcm.getStatus()))
+            return ResponseEntity.badRequest().body(Map.of("message", "Ce devoir n'est pas disponible."));
+        java.util.Optional<QcmStudent> assignment = findAssignment(qcm, student);
+        if (!qcm.getAssignedStudents().isEmpty() && assignment.isEmpty())
+            return ResponseEntity.status(403).body(Map.of("message", "Vous ne figurez pas sur la liste des étudiants de ce devoir."));
+
+        AccesDto dto = new AccesDto();
+        dto.id = qcm.getId(); dto.title = qcm.getTitle(); dto.description = qcm.getDescription();
+        dto.estimatedDurationMinutes = qcm.getEstimatedDurationMinutes() != null ? qcm.getEstimatedDurationMinutes() : DEFAULT_ESTIMATED_DURATION_MINUTES;
+        dto.questionCount = qcm.getQuestions().size();
+        dto.passwordRequired = assignment.map(a -> a.getAccessPassword() != null && !a.getAccessPassword().isBlank()).orElse(false);
+        dto.studentName = assignment.map(QcmStudent::getStudentName).orElse(student.getFirstName() + " " + student.getLastName());
+        dto.studentLevel = assignment.map(QcmStudent::getLevel).orElse(null);
+        return ResponseEntity.ok(dto);
+    }
+
     // ── Commencer ou reprendre un QCM ─────────────────────────────────────
 
     @PostMapping("/{id}/commencer")
     @Transactional
-    public ResponseEntity<QcmTakeDto> commencer(@PathVariable Long id, Authentication auth) {
+    public ResponseEntity<?> commencer(@PathVariable Long id,
+                                       @RequestBody(required = false) CommencerInput input,
+                                       Authentication auth) {
         User student = userRepo.findByEmail(auth.getName()).orElseThrow();
         Qcm qcm = qcmRepo.findById(id).orElseThrow();
         if (!"PUBLISHED".equals(qcm.getStatus()))
             return ResponseEntity.badRequest().build();
+
+        java.util.Optional<QcmStudent> assignment = findAssignment(qcm, student);
+        if (!qcm.getAssignedStudents().isEmpty() && assignment.isEmpty())
+            return ResponseEntity.status(403).body(Map.of("message", "Vous ne figurez pas sur la liste des étudiants de ce devoir."));
+        String expectedPassword = assignment.map(QcmStudent::getAccessPassword).orElse(null);
+        if (expectedPassword != null && !expectedPassword.isBlank()) {
+            String given = input != null && input.password != null ? input.password.trim() : "";
+            if (!java.security.MessageDigest.isEqual(expectedPassword.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    given.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+                return ResponseEntity.status(403).body(Map.of("message", "Mot de passe incorrect."));
+            }
+        }
 
         QcmPassage passage = passageRepo.findByQcmAndStudent(qcm, student)
             .orElseGet(() -> QcmPassage.builder().qcm(qcm).student(student).build());
@@ -227,8 +273,19 @@ public class QcmEtudiantController {
         Qcm qcm = qcmRepo.findById(id).orElseThrow();
         QcmPassage passage = passageRepo.findByQcmAndStudent(qcm, student).orElseThrow();
 
-        if (requiresPaperCorrection(qcm)
-                && (passage.getPaperCorrectionUrl() == null || passage.getPaperCorrectionUrl().isBlank())) {
+        // Map questionId -> choice choisi
+        Map<Long, ReponseInput> responseMap = input.reponses == null ? Map.of() :
+            input.reponses.stream()
+            .filter(r -> r.questionId != null)
+            .collect(Collectors.toMap(r -> r.questionId, r -> r, (a, b) -> b));
+
+        boolean hasPaperCopy = passage.getPaperCorrectionUrl() != null && !passage.getPaperCorrectionUrl().isBlank();
+        // Le cas pratique peut être rédigé directement dans la zone de saisie : la copie papier
+        // n'est alors plus obligatoire, sauf si le professeur l'a exigée explicitement.
+        boolean allCasesTyped = hasPaperCase(qcm) && qcm.getQuestions().stream().filter(this::isPaperCase)
+            .allMatch(q -> textAnswerOf(responseMap.get(q.getId())) != null);
+        boolean paperMandatory = Boolean.TRUE.equals(qcm.getPaperCorrectionRequired()) || (hasPaperCase(qcm) && !allCasesTyped);
+        if (paperMandatory && !hasPaperCopy) {
             return ResponseEntity.badRequest().build();
         }
 
@@ -237,10 +294,14 @@ public class QcmEtudiantController {
 
         passage.setDocumentAnswer(input.documentAnswer);
 
-        // Map questionId -> choice choisi
-        Map<Long, ReponseInput> responseMap = input.reponses == null ? Map.of() :
-            input.reponses.stream()
-            .collect(Collectors.toMap(r -> r.questionId, r -> r, (a, b) -> b));
+        // Pas de copie scannée : on corrige le cas pratique à partir de la réponse saisie
+        if (!hasPaperCopy && allCasesTyped && passage.getOcrScore() == null) {
+            Map<Long, String> typed = qcm.getQuestions().stream().filter(this::isPaperCase)
+                .collect(Collectors.toMap(QcmQuestion::getId, q -> textAnswerOf(responseMap.get(q.getId()))));
+            QcmCaseOcrGradingService.GradeResult grade = caseOcrGradingService.gradeTypedAnswers(qcm, typed);
+            passage.setOcrScore(grade.score());
+            passage.setOcrCorrectionNote(grade.comment());
+        }
 
         int score = 0, maxScore = 0;
         passage.getReponses().clear();
@@ -278,9 +339,11 @@ public class QcmEtudiantController {
                 score += question.getPoints();
             }
 
+            String typedAnswer = paperCase || "LONG_TEXT".equalsIgnoreCase(question.getQuestionType())
+                ? textAnswerOf(response) : null;
             passage.getReponses().add(QcmReponse.builder()
                 .passage(passage).question(question)
-                .choiceSelected(chosen).isCorrect(correct).build());
+                .choiceSelected(chosen).textAnswer(typedAnswer).isCorrect(correct).build());
         }
 
         passage.setScore(score);
@@ -292,8 +355,10 @@ public class QcmEtudiantController {
         return ResponseEntity.ok(buildResultat(passage, qcm));
     }
 
-    private boolean requiresPaperCorrection(Qcm qcm) {
-        return Boolean.TRUE.equals(qcm.getPaperCorrectionRequired()) || hasPaperCase(qcm);
+    private String textAnswerOf(ReponseInput response) {
+        if (response == null || response.values == null) return null;
+        String answer = response.values.get("answer");
+        return answer == null || answer.isBlank() ? null : answer.trim();
     }
 
     private boolean isPaperCase(QcmQuestion question) {
