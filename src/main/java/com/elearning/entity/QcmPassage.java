@@ -29,6 +29,12 @@ public class QcmPassage {
 
     private LocalDateTime submittedAt;
 
+    // Identité saisie par l'étudiant au début du devoir
+    private String declaredLastName;
+    private String declaredFirstName;
+    private java.time.LocalDate birthDate;
+    private String declaredLevel;
+
     @Builder.Default
     private Boolean isSubmitted = false;
 

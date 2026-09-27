@@ -77,15 +77,18 @@ public class AdminUsersController {
             .enabled(true)
             .registrationStatus("APPROVED")
             .build());
-        boolean emailSent = emailService.sendAccountCreated(email, user.getFirstName(),
+        String emailError = emailService.sendAccountCreated(email, user.getFirstName(),
             role == Role.ROLE_TEACHER ? "professeur" : "étudiant", password);
+        boolean emailSent = emailError == null;
 
         return ResponseEntity.ok(Map.of(
             "user", UserDto.from(user),
             "emailSent", emailSent,
             "message", emailSent
                 ? "Compte créé. Les identifiants ont été envoyés à " + email + "."
-                : "Compte créé, mais l'email n'a pas pu être envoyé : communiquez les identifiants manuellement."));
+                : "Compte créé, mais l'email n'a pas pu être envoyé : " + emailError
+                    + ". Communiquez les identifiants manuellement (mot de passe : " + password + ").",
+            "password", emailSent ? "" : password));
     }
 
     @Data

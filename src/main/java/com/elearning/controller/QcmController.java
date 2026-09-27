@@ -66,6 +66,7 @@ public class QcmController {
 
     @Data static class PassageResultDto {
         Long passageId; Long studentId; String studentName; String studentEmail; String studentLevel;
+        String lastName; String firstName; String birthDate;
         Integer score; Integer maxScore; String percentage; String submittedAt;
         Integer manualScore; String manualCorrectionNote; Integer ocrScore; String ocrCorrectionNote; String paperCorrectionUrl; String paperCorrectionFilename;
         String status; String documentAnswer; String correctionText;
@@ -782,7 +783,10 @@ public class QcmController {
             listedEmails.add(email);
             QcmPassage passage = submittedByEmail.get(email);
             PassageResultDto dto = toPassageResult(assigned.getStudentName(), assigned.getStudentEmail(), passage, qcm);
-            dto.studentLevel = assigned.getLevel();
+            // Valeurs de la liste du professeur si l'étudiant n'a encore rien saisi
+            if (dto.lastName == null) dto.lastName = assigned.getLastName();
+            if (dto.firstName == null) dto.firstName = assigned.getFirstName();
+            if (dto.studentLevel == null) dto.studentLevel = assigned.getLevel();
             results.add(dto);
         }
         submittedByEmail.forEach((email, passage) -> {
@@ -800,6 +804,13 @@ public class QcmController {
         dto.studentEmail = studentEmail;
         dto.status = p == null ? "NON_COMMENCE" : (Boolean.TRUE.equals(p.getIsSubmitted()) ? "SOUMIS" : "EN_COURS");
         if (p == null) return dto;
+        // Identité saisie par l'étudiant au début du devoir
+        dto.lastName = trimToNull(p.getDeclaredLastName());
+        dto.firstName = trimToNull(p.getDeclaredFirstName());
+        dto.birthDate = p.getBirthDate() != null ? p.getBirthDate().toString() : null;
+        dto.studentLevel = trimToNull(p.getDeclaredLevel());
+        if (dto.lastName == null) dto.lastName = p.getStudent().getLastName();
+        if (dto.firstName == null) dto.firstName = p.getStudent().getFirstName();
         dto.passageId = p.getId();
         dto.studentId = p.getStudent().getId();
         dto.score = p.getScore();

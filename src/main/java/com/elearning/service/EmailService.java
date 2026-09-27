@@ -122,8 +122,8 @@ public class EmailService {
         sendEmail(to, "✅ Votre compte ELearning est activé — Bienvenue " + firstName + " !", content);
     }
 
-    /** Envoie les identifiants d'un compte créé par l'administrateur. Retourne false si l'envoi a échoué. */
-    public boolean sendAccountCreated(String to, String firstName, String roleLabel, String password) {
+    /** Envoie les identifiants d'un compte créé par l'administrateur. Retourne la raison de l'échec, ou null si envoyé. */
+    public String sendAccountCreated(String to, String firstName, String roleLabel, String password) {
         String loginUrl = frontendUrlForAdmin + "/auth/login";
         String resetUrl = frontendUrlForAdmin + "/auth/forgot-password";
         String content = "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto'>" +
@@ -141,7 +141,7 @@ public class EmailService {
             "<p style='color:#6b7280;font-size:13px'>Pour votre sécurité, vous pouvez changer ce mot de passe à tout moment : " +
             "<a href='" + resetUrl + "' style='color:#1d6ff2'>réinitialiser mon mot de passe</a>. Ne partagez jamais vos identifiants.</p>" +
             "</div></div>";
-        return sendEmail(to, "🎓 Vos identifiants ITECOM", content);
+        return trySendEmail(to, "🎓 Vos identifiants ITECOM", content);
     }
 
     private static String escape(String value) {
@@ -163,9 +163,14 @@ public class EmailService {
     }
 
     private boolean sendEmail(String to, String subject, String htmlContent) {
+        return trySendEmail(to, subject, htmlContent) == null;
+    }
+
+    /** Envoie l'email ; retourne null si l'envoi a réussi, sinon la raison de l'échec. */
+    private String trySendEmail(String to, String subject, String htmlContent) {
         if (!mailEnabled) {
-            log.debug("Email désactivé, message non envoyé à {}: {}", to, subject);
-            return false;
+            log.warn("Email désactivé (APP_MAIL_ENABLED=false), message non envoyé à {}: {}", to, subject);
+            return "l'envoi d'emails est désactivé sur le serveur (variable APP_MAIL_ENABLED=false)";
         }
         try {
             MimeMessage message = mailSender.createMimeMessage();
@@ -175,12 +180,26 @@ public class EmailService {
             helper.setSubject(subject);
             helper.setText(htmlContent, true);
             mailSender.send(message);
-            return true;
+            return null;
         } catch (MessagingException | MailException e) {
             // A mail outage must not roll back grading or account operations.
             log.warn("Email non envoyé à {}: {}", to, e.getMessage());
-            return false;
+            return describeMailError(e);
         }
+    }
+
+    private static String describeMailError(Exception e) {
+        String message = e.getMessage() == null ? "" : e.getMessage();
+        String lower = message.toLowerCase();
+        if (lower.contains("authentication") || lower.contains("535") || lower.contains("username and password")) {
+            return "le serveur Gmail a refusé l'identifiant ou le mot de passe (vérifiez MAIL_USERNAME et MAIL_PASSWORD : "
+                + "il faut un « mot de passe d'application » Google, pas le mot de passe du compte)";
+        }
+        if (lower.contains("connect") || lower.contains("timed out") || lower.contains("timeout")) {
+            return "impossible de joindre le serveur SMTP smtp.gmail.com:587 (connexion sortante bloquée ou délai dépassé ; "
+                + "certains hébergeurs, dont les offres Railway Trial/Hobby, bloquent le SMTP)";
+        }
+        return message.length() > 300 ? message.substring(0, 300) : message;
     }
 
     private String buildVerificationEmailContent(String firstName, String url) {

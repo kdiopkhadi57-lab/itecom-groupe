@@ -61,7 +61,9 @@ public class QcmEtudiantController {
     @Data static class QcmListDto   { Long id; String title; String description; String professorName; int questionCount; boolean alreadyTaken; String createdAt; Integer score; Integer maxScore; }
     @Data static class QcmTakeDto   { Long id; String title; String description; String subjectFileUrl; String subjectText; Long passageId; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String paperCorrectionUrl; String paperCorrectionFilename; String startedAt; List<QuestionDto> questions; }
 
-    @Data static class AccesDto     { Long id; String title; String description; Integer estimatedDurationMinutes; int questionCount; String studentName; String studentLevel; }
+    @Data static class AccesDto     { Long id; String title; String description; Integer estimatedDurationMinutes; int questionCount; String studentName; String studentLevel;
+                                      String lastName; String firstName; String birthDate; String level; }
+    @Data static class CommencerInput { String lastName; String firstName; String birthDate; String level; }
 
     @Data static class SoumettreInput { List<ReponseInput> reponses; String documentAnswer; }
     @Data static class ReponseInput   { Long questionId; Long choiceId; Map<String, String> values; }
@@ -132,6 +134,15 @@ public class QcmEtudiantController {
         dto.questionCount = qcm.getQuestions().size();
         dto.studentName = assignment.map(QcmStudent::getStudentName).orElse(student.getFirstName() + " " + student.getLastName());
         dto.studentLevel = assignment.map(QcmStudent::getLevel).orElse(null);
+        // Pré-remplissage : identité déjà saisie, sinon liste du professeur, sinon compte
+        QcmPassage existing = passageRepo.findByQcmAndStudent(qcm, student).orElse(null);
+        dto.lastName = firstNonBlank(existing != null ? existing.getDeclaredLastName() : null,
+            assignment.map(QcmStudent::getLastName).orElse(null), student.getLastName());
+        dto.firstName = firstNonBlank(existing != null ? existing.getDeclaredFirstName() : null,
+            assignment.map(QcmStudent::getFirstName).orElse(null), student.getFirstName());
+        dto.level = firstNonBlank(existing != null ? existing.getDeclaredLevel() : null,
+            assignment.map(QcmStudent::getLevel).orElse(null));
+        dto.birthDate = existing != null && existing.getBirthDate() != null ? existing.getBirthDate().toString() : null;
         return ResponseEntity.ok(dto);
     }
 
@@ -139,7 +150,12 @@ public class QcmEtudiantController {
 
     @PostMapping("/{id}/commencer")
     @Transactional
-    public ResponseEntity<?> commencer(@PathVariable Long id, Authentication auth) {
+    public ResponseEntity<?> commencer(@PathVariable Long id,
+                                       @RequestBody(required = false) CommencerInput input,
+                                       Authentication auth) {
+        String identityError = validateIdentity(input);
+        if (identityError != null) return ResponseEntity.badRequest().body(Map.of("message", identityError));
+
         User student = userRepo.findByEmail(auth.getName()).orElseThrow();
         Qcm qcm = qcmRepo.findById(id).orElseThrow();
         if (!"PUBLISHED".equals(qcm.getStatus()))
@@ -158,6 +174,12 @@ public class QcmEtudiantController {
 
         if (Boolean.TRUE.equals(passage.getIsSubmitted()))
             return ResponseEntity.badRequest().build();
+
+        passage.setDeclaredLastName(input.lastName.trim());
+        passage.setDeclaredFirstName(input.firstName.trim());
+        passage.setBirthDate(java.time.LocalDate.parse(input.birthDate.trim()));
+        passage.setDeclaredLevel(input.level.trim());
+        passageRepo.save(passage);
 
         if (passage.getStartedAt() == null) {
             passage.setStartedAt(LocalDateTime.now());
@@ -363,6 +385,24 @@ public class QcmEtudiantController {
         passageRepo.save(passage);
 
         return ResponseEntity.ok(buildResultat(passage, qcm));
+    }
+
+    /** Nom, prénom, date de naissance et niveau sont obligatoires avant de commencer le devoir. */
+    private static String validateIdentity(CommencerInput input) {
+        if (input == null || firstNonBlank(input.lastName) == null || firstNonBlank(input.firstName) == null
+                || firstNonBlank(input.birthDate) == null || firstNonBlank(input.level) == null) {
+            return "Renseignez votre nom, prénom, date de naissance et niveau avant de commencer.";
+        }
+        try {
+            java.time.LocalDate birth = java.time.LocalDate.parse(input.birthDate.trim());
+            java.time.LocalDate today = java.time.LocalDate.now();
+            if (birth.isAfter(today.minusYears(10)) || birth.isBefore(today.minusYears(100))) {
+                return "Date de naissance invalide.";
+            }
+        } catch (java.time.format.DateTimeParseException e) {
+            return "Date de naissance invalide.";
+        }
+        return null;
     }
 
     private static final String PLACEHOLDER_ANSWER = "Référence de correction fournie par le professeur.";
