@@ -18,6 +18,12 @@ public class User {
     @Column(nullable = false) private String password;
     @Enumerated(EnumType.STRING) private Role role;
     private String specialization;
+    // Étudiant : état civil et niveau (L1, L2, L3, M1, M2)
+    private java.time.LocalDate birthDate;
+    private String birthPlace;
+    @Column(name = "study_level") private String level;
+    // Professeur : matières enseignées
+    @Column(length = 500) private String subjects;
     private String avatarUrl;
     private String bio;
     private String phone;

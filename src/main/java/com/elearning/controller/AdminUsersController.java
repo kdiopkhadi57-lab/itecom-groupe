@@ -32,7 +32,13 @@ public class AdminUsersController {
         String role;            // STUDENT | TEACHER
         String specialization;
         String password;        // généré s'il est vide
+        String birthDate;       // étudiant (aaaa-mm-jj)
+        String birthPlace;      // étudiant
+        String level;           // étudiant : L1, L2, L3, M1, M2
+        String subjects;        // professeur : matières enseignées
     }
+
+    static final List<String> LEVELS = List.of("L1", "L2", "L3", "M1", "M2");
 
     // Sans caractères ambigus (0/O, 1/l/I) pour faciliter la saisie
     private static final String PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -63,6 +69,27 @@ public class AdminUsersController {
             return ResponseEntity.badRequest().body(Map.of("message", "Un compte existe déjà avec l'email " + email + "."));
         }
         Role role = "TEACHER".equalsIgnoreCase(input.role) ? Role.ROLE_TEACHER : Role.ROLE_STUDENT;
+        java.time.LocalDate birthDate = null;
+        if (role == Role.ROLE_STUDENT) {
+            if (isBlank(input.birthDate) || isBlank(input.birthPlace) || isBlank(input.level)) {
+                return ResponseEntity.badRequest().body(Map.of("message",
+                    "Pour un étudiant, la date de naissance, le lieu de naissance et le niveau sont obligatoires."));
+            }
+            if (!LEVELS.contains(input.level.trim().toUpperCase())) {
+                return ResponseEntity.badRequest().body(Map.of("message", "Niveau invalide : choisissez L1, L2, L3, M1 ou M2."));
+            }
+            try {
+                birthDate = java.time.LocalDate.parse(input.birthDate.trim());
+            } catch (java.time.format.DateTimeParseException e) {
+                return ResponseEntity.badRequest().body(Map.of("message", "Date de naissance invalide."));
+            }
+            java.time.LocalDate today = java.time.LocalDate.now();
+            if (birthDate.isAfter(today.minusYears(10)) || birthDate.isBefore(today.minusYears(100))) {
+                return ResponseEntity.badRequest().body(Map.of("message", "Date de naissance invalide."));
+            }
+        } else if (isBlank(input.subjects)) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Indiquez au moins une matière enseignée par le professeur."));
+        }
         String password = isBlank(input.password) ? generatePassword() : input.password.trim();
         if (password.length() < 6) {
             return ResponseEntity.badRequest().body(Map.of("message", "Le mot de passe doit contenir au moins 6 caractères."));
@@ -73,7 +100,11 @@ public class AdminUsersController {
             .email(email)
             .password(passwordEncoder.encode(password))
             .role(role)
-            .specialization(isBlank(input.specialization) ? null : input.specialization.trim())
+            .specialization(role == Role.ROLE_STUDENT && !isBlank(input.specialization) ? input.specialization.trim() : null)
+            .birthDate(birthDate)
+            .birthPlace(role == Role.ROLE_STUDENT ? input.birthPlace.trim() : null)
+            .level(role == Role.ROLE_STUDENT ? input.level.trim().toUpperCase() : null)
+            .subjects(role == Role.ROLE_TEACHER ? input.subjects.trim() : null)
             .enabled(true)
             .registrationStatus("APPROVED")
             .build());
@@ -97,6 +128,7 @@ public class AdminUsersController {
         String specialization; String bio; String avatarUrl;
         String role; String registrationStatus; boolean enabled;
         LocalDateTime createdAt;
+        String birthDate; String birthPlace; String level; String subjects;
 
         static UserDto from(User u) {
             UserDto d = new UserDto();
@@ -106,6 +138,8 @@ public class AdminUsersController {
             d.role = u.getRole() != null ? u.getRole().name() : null;
             d.registrationStatus = u.getRegistrationStatus();
             d.enabled = u.isEnabled(); d.createdAt = u.getCreatedAt();
+            d.birthDate = u.getBirthDate() != null ? u.getBirthDate().toString() : null;
+            d.birthPlace = u.getBirthPlace(); d.level = u.getLevel(); d.subjects = u.getSubjects();
             return d;
         }
     }
