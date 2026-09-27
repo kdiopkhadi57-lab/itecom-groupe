@@ -62,8 +62,7 @@ public class QcmEtudiantController {
     @Data static class QcmListDto   { Long id; String title; String description; String professorName; int questionCount; boolean alreadyTaken; String createdAt; Integer score; Integer maxScore; }
     @Data static class QcmTakeDto   { Long id; String title; String description; String subjectFileUrl; String subjectText; Long passageId; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String paperCorrectionUrl; String paperCorrectionFilename; String startedAt; List<QuestionDto> questions; }
 
-    @Data static class AccesDto     { Long id; String title; String description; Integer estimatedDurationMinutes; int questionCount; boolean passwordRequired; String studentName; String studentLevel; }
-    @Data static class CommencerInput { String password; }
+    @Data static class AccesDto     { Long id; String title; String description; Integer estimatedDurationMinutes; int questionCount; String studentName; String studentLevel; }
 
     @Data static class SoumettreInput { List<ReponseInput> reponses; String documentAnswer; }
     @Data static class ReponseInput   { Long questionId; Long choiceId; Map<String, String> values; }
@@ -132,7 +131,6 @@ public class QcmEtudiantController {
         dto.id = qcm.getId(); dto.title = qcm.getTitle(); dto.description = qcm.getDescription();
         dto.estimatedDurationMinutes = qcm.getEstimatedDurationMinutes() != null ? qcm.getEstimatedDurationMinutes() : DEFAULT_ESTIMATED_DURATION_MINUTES;
         dto.questionCount = qcm.getQuestions().size();
-        dto.passwordRequired = assignment.map(a -> a.getAccessPassword() != null && !a.getAccessPassword().isBlank()).orElse(false);
         dto.studentName = assignment.map(QcmStudent::getStudentName).orElse(student.getFirstName() + " " + student.getLastName());
         dto.studentLevel = assignment.map(QcmStudent::getLevel).orElse(null);
         return ResponseEntity.ok(dto);
@@ -142,9 +140,7 @@ public class QcmEtudiantController {
 
     @PostMapping("/{id}/commencer")
     @Transactional
-    public ResponseEntity<?> commencer(@PathVariable Long id,
-                                       @RequestBody(required = false) CommencerInput input,
-                                       Authentication auth) {
+    public ResponseEntity<?> commencer(@PathVariable Long id, Authentication auth) {
         User student = userRepo.findByEmail(auth.getName()).orElseThrow();
         Qcm qcm = qcmRepo.findById(id).orElseThrow();
         if (!"PUBLISHED".equals(qcm.getStatus()))
@@ -153,14 +149,6 @@ public class QcmEtudiantController {
         java.util.Optional<QcmStudent> assignment = findAssignment(qcm, student);
         if (!qcm.getAssignedStudents().isEmpty() && assignment.isEmpty())
             return ResponseEntity.status(403).body(Map.of("message", "Vous ne figurez pas sur la liste des étudiants de ce devoir."));
-        String expectedPassword = assignment.map(QcmStudent::getAccessPassword).orElse(null);
-        if (expectedPassword != null && !expectedPassword.isBlank()) {
-            String given = input != null && input.password != null ? input.password.trim() : "";
-            if (!java.security.MessageDigest.isEqual(expectedPassword.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                    given.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
-                return ResponseEntity.status(403).body(Map.of("message", "Mot de passe incorrect."));
-            }
-        }
 
         QcmPassage passage = passageRepo.findByQcmAndStudent(qcm, student)
             .orElseGet(() -> QcmPassage.builder().qcm(qcm).student(student).build());

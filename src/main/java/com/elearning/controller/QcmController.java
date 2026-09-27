@@ -15,6 +15,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -44,6 +45,7 @@ public class QcmController {
     private final StudentListParserService parserService;
     private final DocumentTextExtractorService documentTextExtractorService;
     private final FileStorageService fileStorageService;
+    private final PasswordEncoder passwordEncoder;
 
     // ── DTOs ───────────────────────────────────────────────────────────────
 
@@ -135,6 +137,45 @@ public class QcmController {
                 .firstName(trimToNull(si.firstName)).lastName(trimToNull(si.lastName))
                 .level(trimToNull(si.level)).accessPassword(password).build());
         }
+        syncStudentAccounts(qcm.getAssignedStudents());
+    }
+
+    /**
+     * Le mot de passe de la liste est le mot de passe de connexion de l'étudiant :
+     * on crée le compte s'il n'existe pas, sinon on remplace son mot de passe.
+     */
+    private void syncStudentAccounts(List<QcmStudent> students) {
+        for (QcmStudent s : students) {
+            String password = s.getAccessPassword();
+            if (password == null || password.isBlank()) continue;
+            User user = userRepo.findByEmail(s.getStudentEmail()).orElse(null);
+            if (user == null) {
+                String firstName = s.getFirstName() != null ? s.getFirstName() : s.getStudentName();
+                String lastName = s.getLastName() != null ? s.getLastName() : "";
+                userRepo.save(User.builder()
+                    .firstName(firstName).lastName(lastName)
+                    .email(s.getStudentEmail())
+                    .password(passwordEncoder.encode(password))
+                    .role(Role.ROLE_STUDENT)
+                    .enabled(true)
+                    .registrationStatus("APPROVED")
+                    .build());
+                continue;
+            }
+            if (user.getRole() != Role.ROLE_STUDENT) continue; // vérifié dans validateStudents
+            boolean changed = false;
+            if (!passwordEncoder.matches(password, user.getPassword())) {
+                user.setPassword(passwordEncoder.encode(password));
+                changed = true;
+            }
+            // Un étudiant inscrit sur la liste d'un devoir doit pouvoir se connecter
+            if (!user.isEnabled() || !"APPROVED".equals(user.getRegistrationStatus())) {
+                user.setEnabled(true);
+                user.setRegistrationStatus("APPROVED");
+                changed = true;
+            }
+            if (changed) userRepo.save(user);
+        }
     }
 
     /** Refuse les emails ou mots de passe en double : chaque étudiant doit avoir un mot de passe qui lui est propre. */
@@ -146,6 +187,10 @@ public class QcmController {
             if (!emails.add(email)) {
                 throw new IllegalArgumentException("L'email " + email + " apparaît plusieurs fois dans la liste des étudiants.");
             }
+            userRepo.findByEmail(email).filter(u -> u.getRole() != Role.ROLE_STUDENT).ifPresent(u -> {
+                throw new IllegalArgumentException("L'email " + email + " appartient à un compte professeur ou administrateur : "
+                    + "il ne peut pas figurer dans la liste des étudiants.");
+            });
             String password = trimToNull(si.password);
             if (password == null) continue;
             String owner = passwordOwners.putIfAbsent(password, displayName(si));
@@ -386,6 +431,10 @@ public class QcmController {
                 .filter(Objects::nonNull).collect(Collectors.toCollection(HashSet::new));
             int added = 0;
             for (StudentListParserService.StudentInfo info : parserService.parseFile(file)) {
+                if (userRepo.findByEmail(info.email()).map(u -> u.getRole() != Role.ROLE_STUDENT).orElse(false)) {
+                    throw new IllegalArgumentException("L'email " + info.email()
+                        + " appartient à un compte professeur ou administrateur.");
+                }
                 if (!existing.add(info.email())) continue;
                 String password = trimToNull(info.password());
                 if (password != null && !usedPasswords.add(password)) {
@@ -400,6 +449,7 @@ public class QcmController {
                     .level(info.level()).accessPassword(password).build());
                 added++;
             }
+            syncStudentAccounts(qcm.getAssignedStudents());
             qcmRepo.save(qcm);
             return ResponseEntity.ok(Map.of("message", added + " étudiant(s) ajouté(s)", "total", qcm.getAssignedStudents().size()));
         } catch (Exception e) {
