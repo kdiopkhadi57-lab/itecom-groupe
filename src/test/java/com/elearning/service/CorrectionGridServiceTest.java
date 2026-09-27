@@ -86,6 +86,18 @@ class CorrectionGridServiceTest {
     }
 
     @Test
+    void rowWithSeveralResultsAcceptsTheAnswerTypedInTheSubjectRow() {
+        String correction = """
+            N°\tQuestion\tRéponse attendue
+            1\tCalculez le coût et la marge\t1 200 FCFA ; 350 FCFA
+            """;
+        var grid = service.buildGrid(correction, null, 4);
+        assertEquals(List.of("Q1a", "Q1b"), grid.stream().map(CorrectionGridService.GridRow::id).toList());
+        var result = service.compare(grid, Map.of("Q1", "coût 1 200 et marge 350"), Map.of(), "");
+        assertEquals(4.0, result.earned());
+    }
+
+    @Test
     void gridSurvivesJsonRoundTrip() {
         var grid = service.buildGrid(CORRECTION, SUBJECT, 9);
         assertEquals(grid, service.parseGrid(service.toJson(grid)));

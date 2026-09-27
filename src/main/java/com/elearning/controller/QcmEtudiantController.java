@@ -228,10 +228,11 @@ public class QcmEtudiantController {
             qd.caseScenario = q.getCaseScenario();
             qd.valueLabels = practicalLabels(q.getCorrectionData());
             if (isPaperCase(q)) {
-                // Uniquement l'identifiant, le libellé et l'énoncé : jamais la valeur attendue
+                // Uniquement l'identifiant et le libellé des lignes : aucun texte issu de la correction
+                // (l'énoncé d'une ligne peut contenir des calculs ou le résultat attendu)
                 qd.gridRows = gridService.gridFor(q, qcm).stream().map(row -> {
                     GridRowDto g = new GridRowDto();
-                    g.id = row.id(); g.label = row.label(); g.question = row.question();
+                    g.id = row.id(); g.label = row.label();
                     return g;
                 }).collect(Collectors.toList());
             }

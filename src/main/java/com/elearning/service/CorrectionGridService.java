@@ -184,10 +184,10 @@ public class CorrectionGridService {
         List<Double> textNumbers = freeText == null ? List.of() : comparisonService.numbers(freeText);
         for (GridRow row : grid) {
             total += row.points();
-            String value = blankToNull(typed == null ? null : typed.get(row.id()));
+            String value = valueFor(typed, row.id());
             String source = value != null ? SOURCE_TYPED : null;
             if (value == null) {
-                value = blankToNull(scanned == null ? null : scanned.get(row.id()));
+                value = valueFor(scanned, row.id());
                 if (value != null) source = SOURCE_SCAN;
             }
             boolean correct;
@@ -203,6 +203,17 @@ public class CorrectionGridService {
                 correct, correct ? row.points() : 0, row.points()));
         }
         return new GridResult(results, Math.round(earned * 100) / 100.0, Math.round(total * 100) / 100.0);
+    }
+
+    /**
+     * Valeur d'une ligne ; une ligne de correction à plusieurs résultats (Q1a, Q1b) accepte aussi
+     * la réponse saisie dans la ligne du sujet (Q1).
+     */
+    private static String valueFor(Map<String, String> values, String rowId) {
+        if (values == null) return null;
+        String value = blankToNull(values.get(rowId));
+        if (value == null && rowId.matches(".+[a-z]'*")) value = blankToNull(values.get(rowId.replaceAll("[a-z]'*$", "")));
+        return value;
     }
 
     private boolean close(GridRow row, double actual) {
