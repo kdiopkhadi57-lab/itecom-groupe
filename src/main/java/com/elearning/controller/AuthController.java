@@ -32,7 +32,9 @@ public class AuthController {
 
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<String>> register(@Valid @RequestBody RegisterRequest request) {
-        return ResponseEntity.ok(authService.register(request));
+        // Les comptes sont créés uniquement par l'administrateur (identifiants envoyés par email)
+        return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN)
+            .body(ApiResponse.error("Les inscriptions sont fermées : votre compte est créé par l'administration."));
     }
 
     @PostMapping("/login")

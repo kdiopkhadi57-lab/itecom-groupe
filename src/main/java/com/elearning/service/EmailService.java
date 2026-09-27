@@ -122,6 +122,33 @@ public class EmailService {
         sendEmail(to, "✅ Votre compte ELearning est activé — Bienvenue " + firstName + " !", content);
     }
 
+    /** Envoie les identifiants d'un compte créé par l'administrateur. Retourne false si l'envoi a échoué. */
+    public boolean sendAccountCreated(String to, String firstName, String roleLabel, String password) {
+        String loginUrl = frontendUrlForAdmin + "/auth/login";
+        String resetUrl = frontendUrlForAdmin + "/auth/forgot-password";
+        String content = "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto'>" +
+            "<div style='background:linear-gradient(135deg,#0b2a6f,#1d6ff2);padding:30px;text-align:center'>" +
+            "<h1 style='color:white;margin:0'>🎓 Bienvenue sur ITECOM</h1></div>" +
+            "<div style='padding:30px;background:#f9f9f9'>" +
+            "<h2>Bonjour " + escape(firstName) + ",</h2>" +
+            "<p>L'administration vous a créé un compte <strong>" + escape(roleLabel) + "</strong> sur la plateforme d'apprentissage ITECOM.</p>" +
+            "<table style='width:100%;border-collapse:collapse;background:white;border:1px solid #e5e7eb;border-radius:8px;margin:16px 0'>" +
+            "<tr><td style='padding:12px;font-weight:bold;color:#555;width:40%'>Identifiant (email)</td><td style='padding:12px'>" + escape(to) + "</td></tr>" +
+            "<tr><td style='padding:12px;font-weight:bold;color:#555'>Mot de passe</td><td style='padding:12px;font-family:monospace;font-size:16px'>" + escape(password) + "</td></tr>" +
+            "</table>" +
+            "<div style='text-align:center;margin:24px 0'>" +
+            "<a href='" + loginUrl + "' style='background:#1d6ff2;color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-size:15px'>Se connecter</a></div>" +
+            "<p style='color:#6b7280;font-size:13px'>Pour votre sécurité, vous pouvez changer ce mot de passe à tout moment : " +
+            "<a href='" + resetUrl + "' style='color:#1d6ff2'>réinitialiser mon mot de passe</a>. Ne partagez jamais vos identifiants.</p>" +
+            "</div></div>";
+        return sendEmail(to, "🎓 Vos identifiants ITECOM", content);
+    }
+
+    private static String escape(String value) {
+        if (value == null) return "";
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+    }
+
     public void sendRegistrationRejected(String to, String firstName, String reason) {
         String content = "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto'>" +
             "<div style='background:linear-gradient(135deg,#ef4444,#dc2626);padding:30px;text-align:center'>" +
@@ -135,10 +162,10 @@ public class EmailService {
         sendEmail(to, "❌ Votre demande d'inscription ELearning", content);
     }
 
-    private void sendEmail(String to, String subject, String htmlContent) {
+    private boolean sendEmail(String to, String subject, String htmlContent) {
         if (!mailEnabled) {
             log.debug("Email désactivé, message non envoyé à {}: {}", to, subject);
-            return;
+            return false;
         }
         try {
             MimeMessage message = mailSender.createMimeMessage();
@@ -148,9 +175,11 @@ public class EmailService {
             helper.setSubject(subject);
             helper.setText(htmlContent, true);
             mailSender.send(message);
+            return true;
         } catch (MessagingException | MailException e) {
             // A mail outage must not roll back grading or account operations.
             log.warn("Email non envoyé à {}: {}", to, e.getMessage());
+            return false;
         }
     }
 
