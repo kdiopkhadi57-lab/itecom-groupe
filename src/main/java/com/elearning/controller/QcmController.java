@@ -180,26 +180,54 @@ public class QcmController {
     }
 
     /** Refuse les emails ou mots de passe en double : chaque étudiant doit avoir un mot de passe qui lui est propre. */
+    /** Problèmes détectés dans la liste des étudiants, avec les emails des lignes concernées. */
+    static class StudentListException extends IllegalArgumentException {
+        final List<String> invalidEmails;
+        StudentListException(String message, List<String> invalidEmails) {
+            super(message);
+            this.invalidEmails = invalidEmails;
+        }
+    }
+
+    /**
+     * Refuse les emails en double, les emails de comptes professeur/administrateur et les mots de passe
+     * partagés : chaque étudiant doit avoir un mot de passe qui lui est propre. Tous les problèmes
+     * sont signalés en une seule fois.
+     */
     private void validateStudents(List<StudentInput> students) {
         Set<String> emails = new HashSet<>();
         Map<String, String> passwordOwners = new HashMap<>();
+        List<String> problems = new ArrayList<>();
+        Set<String> invalidEmails = new java.util.LinkedHashSet<>();
         for (StudentInput si : students) {
             String email = si.email.trim().toLowerCase();
             if (!emails.add(email)) {
-                throw new IllegalArgumentException("L'email " + email + " apparaît plusieurs fois dans la liste des étudiants.");
+                problems.add("l'email " + email + " apparaît plusieurs fois");
+                invalidEmails.add(email);
             }
             userRepo.findByEmail(email).filter(u -> u.getRole() != Role.ROLE_STUDENT).ifPresent(u -> {
-                throw new IllegalArgumentException("L'email " + email + " appartient à un compte professeur ou administrateur : "
-                    + "il ne peut pas figurer dans la liste des étudiants.");
+                problems.add(email + " est un compte " + (u.getRole() == Role.ROLE_ADMIN ? "administrateur" : "professeur")
+                    + " (retirez-le de la liste ou utilisez un autre email)");
+                invalidEmails.add(email);
             });
             String password = trimToNull(si.password);
             if (password == null) continue;
-            String owner = passwordOwners.putIfAbsent(password, displayName(si));
+            String owner = passwordOwners.putIfAbsent(password, email);
             if (owner != null) {
-                throw new IllegalArgumentException("Le mot de passe « " + password + " » est attribué à la fois à "
-                    + owner + " et à " + displayName(si) + ". Chaque étudiant doit avoir un mot de passe unique.");
+                problems.add("le même mot de passe est attribué à " + owner + " et à " + email);
+                invalidEmails.add(owner);
+                invalidEmails.add(email);
             }
         }
+        if (!problems.isEmpty()) {
+            throw new StudentListException("Liste des étudiants à corriger : " + String.join(" ; ", problems) + ".",
+                List.copyOf(invalidEmails));
+        }
+    }
+
+    private ResponseEntity<?> studentListError(IllegalArgumentException e) {
+        List<String> invalid = e instanceof StudentListException sle ? sle.invalidEmails : List.of();
+        return ResponseEntity.badRequest().body(Map.of("message", e.getMessage(), "invalidEmails", invalid));
     }
 
     private static String displayName(StudentInput si) {
@@ -287,7 +315,7 @@ public class QcmController {
             validateStudents(input.students == null ? List.of() : input.students.stream()
                 .filter(si -> si.email != null && !si.email.isBlank()).toList());
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+            return studentListError(e);
         }
         User prof = userRepo.findByEmail(auth.getName()).orElseThrow();
         Qcm qcm = Qcm.builder().title(input.title).description(input.description)
@@ -329,7 +357,7 @@ public class QcmController {
             validateStudents(input.students == null ? List.of() : input.students.stream()
                 .filter(si -> si.email != null && !si.email.isBlank()).toList());
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+            return studentListError(e);
         }
         Qcm qcm = qcmRepo.findById(id).orElseThrow();
         qcm.setTitle(input.title);

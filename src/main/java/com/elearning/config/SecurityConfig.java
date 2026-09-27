@@ -47,6 +47,12 @@ public class SecurityConfig {
             // Autorise l'affichage des fichiers uploadés (PDF, etc.) dans une <iframe> de l'application
             // (même origine via le proxy Angular) — sans quoi le navigateur bloque silencieusement le frame.
             .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
+            // Sans jeton valide (session expirée) : 401 au lieu du 403 par défaut, pour renvoyer vers la connexion
+            .exceptionHandling(ex -> ex.authenticationEntryPoint((request, response, authException) -> {
+                response.setStatus(jakarta.servlet.http.HttpServletResponse.SC_UNAUTHORIZED);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"message\":\"Session expirée : veuillez vous reconnecter.\"}");
+            }))
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
