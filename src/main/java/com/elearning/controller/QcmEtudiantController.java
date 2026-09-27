@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import com.elearning.service.FileStorageService;
 import com.elearning.service.QcmCaseOcrGradingService;
-import com.elearning.service.CorrectionComparisonService;
+import com.elearning.service.QcmSubmissionService;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -37,7 +37,7 @@ public class QcmEtudiantController {
     private final ObjectMapper objectMapper;
     private final FileStorageService fileStorageService;
     private final QcmCaseOcrGradingService caseOcrGradingService;
-    private final CorrectionComparisonService comparisonService;
+    private final QcmSubmissionService submissionService;
 
     private static final int DEFAULT_ESTIMATED_DURATION_MINUTES = 30;
 
@@ -59,14 +59,12 @@ public class QcmEtudiantController {
     @Data static class ChoiceDto    { Long id; String choiceText; Integer orderIndex; }
     @Data static class QuestionDto  { Long id; String questionText; Integer points; Integer orderIndex; String questionType; String caseScenario; List<String> valueLabels; List<ChoiceDto> choices; }
     @Data static class QcmListDto   { Long id; String title; String description; String professorName; int questionCount; boolean alreadyTaken; String createdAt; Integer score; Integer maxScore; }
-    @Data static class QcmTakeDto   { Long id; String title; String description; String subjectFileUrl; String subjectText; Long passageId; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String paperCorrectionUrl; String paperCorrectionFilename; String startedAt; List<QuestionDto> questions; }
+    @Data static class QcmTakeDto   { Long id; String title; String description; String subjectFileUrl; String subjectText; Long passageId; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String paperCorrectionUrl; String paperCorrectionFilename; String startedAt; String draftAnswers; List<QuestionDto> questions; }
 
     @Data static class AccesDto     { Long id; String title; String description; Integer estimatedDurationMinutes; int questionCount; String studentName; String studentLevel;
                                       String lastName; String firstName; String birthDate; String level; }
     @Data static class CommencerInput { String lastName; String firstName; String birthDate; String level; }
 
-    @Data static class SoumettreInput { List<ReponseInput> reponses; String documentAnswer; }
-    @Data static class ReponseInput   { Long questionId; Long choiceId; Map<String, String> values; }
 
     @Data static class ResultatDto {
         Long passageId; String qcmTitle; Integer score; Integer maxScore;
@@ -81,7 +79,7 @@ public class QcmEtudiantController {
     // ── Liste des QCMs publiés ─────────────────────────────────────────────
 
     @GetMapping
-    @Transactional(readOnly = true)
+    @Transactional
     public ResponseEntity<List<QcmListDto>> list(Authentication auth) {
         User student = userRepo.findByEmail(auth.getName()).orElseThrow();
         String studentEmail = student.getEmail().toLowerCase();
@@ -101,6 +99,7 @@ public class QcmEtudiantController {
                 d.questionCount = qcm.getQuestions().size();
                 d.createdAt = qcm.getCreatedAt() != null ? qcm.getCreatedAt().toString() : null;
                 passageRepo.findByQcmAndStudent(qcm, student).ifPresent(p -> {
+                    submissionService.autoSubmitIfExpired(p);
                     d.alreadyTaken = Boolean.TRUE.equals(p.getIsSubmitted());
                     if (d.alreadyTaken && !isStillLocked(p)) { d.score = p.getScore(); d.maxScore = p.getMaxScore(); }
                 });
@@ -172,8 +171,10 @@ public class QcmEtudiantController {
             passage = passageRepo.save(passage);
         }
 
+        // Temps écoulé sans soumission : la copie est soumise avec les réponses enregistrées
+        submissionService.autoSubmitIfExpired(passage);
         if (Boolean.TRUE.equals(passage.getIsSubmitted()))
-            return ResponseEntity.badRequest().build();
+            return ResponseEntity.badRequest().body(Map.of("message", "Ce devoir a déjà été soumis."));
 
         passage.setDeclaredLastName(input.lastName.trim());
         passage.setDeclaredFirstName(input.firstName.trim());
@@ -197,6 +198,7 @@ public class QcmEtudiantController {
         dto.paperCorrectionUrl = passage.getPaperCorrectionUrl();
         dto.paperCorrectionFilename = passage.getPaperCorrectionFilename();
         dto.startedAt = passage.getStartedAt() != null ? passage.getStartedAt().toString() : null;
+        dto.draftAnswers = passage.getDraftAnswers();
         if (qcm.getQuestions().stream().noneMatch(question -> "CASE".equalsIgnoreCase(question.getQuestionType()))) {
             String subjectText = qcm.getSubjectText() == null ? "" : qcm.getSubjectText().trim();
             if (!subjectText.isBlank() && qcm.getQuestions().stream().noneMatch(question -> question.getQuestionText()!=null && question.getQuestionText().contains(subjectText.substring(0, Math.min(80, subjectText.length()))))) {
@@ -279,112 +281,41 @@ public class QcmEtudiantController {
 
     @PostMapping("/{id}/soumettre")
     @Transactional
-    public ResponseEntity<ResultatDto> soumettre(
+    public ResponseEntity<?> soumettre(
             @PathVariable Long id,
-            @RequestBody SoumettreInput input,
+            @RequestBody QcmSubmissionService.Submission input,
             Authentication auth) {
 
         User student = userRepo.findByEmail(auth.getName()).orElseThrow();
         Qcm qcm = qcmRepo.findById(id).orElseThrow();
-        QcmPassage passage = passageRepo.findByQcmAndStudent(qcm, student).orElseThrow();
-
-        // Map questionId -> choice choisi
-        Map<Long, ReponseInput> responseMap = input.reponses == null ? Map.of() :
-            input.reponses.stream()
-            .filter(r -> r.questionId != null)
-            .collect(Collectors.toMap(r -> r.questionId, r -> r, (a, b) -> b));
-
-        boolean hasPaperCopy = passage.getPaperCorrectionUrl() != null && !passage.getPaperCorrectionUrl().isBlank();
-        // Le cas pratique peut être rédigé directement dans la zone de saisie : la copie papier
-        // n'est alors plus obligatoire, sauf si le professeur l'a exigée explicitement.
-        boolean allCasesTyped = hasPaperCase(qcm) && qcm.getQuestions().stream().filter(this::isPaperCase)
-            .allMatch(q -> textAnswerOf(responseMap.get(q.getId())) != null);
-        boolean paperMandatory = Boolean.TRUE.equals(qcm.getPaperCorrectionRequired()) || (hasPaperCase(qcm) && !allCasesTyped);
-        if (paperMandatory && !hasPaperCopy) {
-            return ResponseEntity.badRequest().build();
+        QcmPassage passage = passageRepo.findByQcmAndStudent(qcm, student).orElse(null);
+        if (passage == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Commencez le devoir avant de le soumettre."));
         }
-
-        if (Boolean.TRUE.equals(passage.getIsSubmitted()))
-            return ResponseEntity.badRequest().build();
-
-        passage.setDocumentAnswer(input.documentAnswer);
-
-        // Pas de copie scannée : on corrige le cas pratique à partir de la réponse saisie
-        if (!hasPaperCopy && allCasesTyped && passage.getOcrScore() == null
-                && qcm.getQuestions().stream().filter(this::isPaperCase).allMatch(q -> expectedFor(q, qcm).isEmpty())) {
-            Map<Long, String> typed = qcm.getQuestions().stream().filter(this::isPaperCase)
-                .collect(Collectors.toMap(QcmQuestion::getId, q -> textAnswerOf(responseMap.get(q.getId()))));
-            QcmCaseOcrGradingService.GradeResult grade = caseOcrGradingService.gradeTypedAnswers(qcm, typed);
-            passage.setOcrScore(grade.score());
-            passage.setOcrCorrectionNote(grade.comment());
+        if (Boolean.TRUE.equals(passage.getIsSubmitted())) {
+            // Copie déjà soumise (par exemple automatiquement) : on renvoie le résultat enregistré
+            return ResponseEntity.ok(buildResultat(passage, qcm));
         }
-
-        int score = 0, maxScore = 0;
-        passage.getReponses().clear();
-
-        List<String> comparisonReports = new ArrayList<>();
-        if (qcm.getQuestions().isEmpty()) {
-            var expected = comparisonService.expectedValues(qcm.getCorrectionText(), qcm.getSubjectText());
-            var result = comparisonService.compare(expected, joinTexts(input.documentAnswer, passage.getOcrExtractedText()));
-            score = result.matched();
-            maxScore = result.total();
-            if (!expected.isEmpty()) comparisonReports.add(result.report());
+        // Les réponses sont d'abord conservées : rien n'est perdu si la soumission est refusée
+        submissionService.saveDraft(passage, input);
+        try {
+            submissionService.submit(passage, input);
+        } catch (QcmSubmissionService.SubmissionRefusedException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
-
-        for (QcmQuestion question : qcm.getQuestions()) {
-            maxScore += question.getPoints();
-            ReponseInput response = responseMap.get(question.getId());
-            Long chosenId = response != null ? response.choiceId : null;
-
-            QcmChoice chosen = question.getChoices().stream()
-                .filter(c -> c.getId().equals(chosenId)).findFirst().orElse(null);
-
-            boolean paperCase = isPaperCase(question);
-            double practicalRatio = "PRACTICAL".equals(question.getQuestionType()) && !paperCase
-                ? gradePractical(question, response != null ? response.values : Map.of()) : 0;
-            boolean correct = paperCase
-                ? passage.getOcrScore() != null && passage.getOcrScore() >= question.getPoints()
-                : "PRACTICAL".equals(question.getQuestionType())
-                ? practicalRatio >= 0.999
-                : chosen != null && Boolean.TRUE.equals(chosen.getIsCorrect());
-            var expectedValues = paperCase ? expectedFor(question, qcm) : List.<CorrectionComparisonService.ExpectedValue>of();
-            if (paperCase && !expectedValues.isEmpty()) {
-                // Comparaison de chaque chiffre de la correction avec la réponse saisie et la copie scannée
-                var result = comparisonService.compare(expectedValues,
-                    joinTexts(textAnswerOf(response), passage.getOcrExtractedText()));
-                score += (int) Math.round(question.getPoints() * result.ratio());
-                correct = result.matched() == result.total();
-                comparisonReports.add(result.report());
-                if (hasPaperCopy && (passage.getOcrExtractedText() == null || passage.getOcrExtractedText().isBlank())) {
-                    comparisonReports.add("Transcription de la copie scannée indisponible : vérifiez la copie manuellement.");
-                }
-            } else if (paperCase) {
-                score += ocrScoreForQuestion(passage, question, qcm);
-            } else if ("PRACTICAL".equals(question.getQuestionType())) {
-                score += (int) Math.round(question.getPoints() * practicalRatio);
-            } else if (correct) {
-                score += question.getPoints();
-            }
-
-            String typedAnswer = paperCase || "LONG_TEXT".equalsIgnoreCase(question.getQuestionType())
-                ? textAnswerOf(response) : null;
-            passage.getReponses().add(QcmReponse.builder()
-                .passage(passage).question(question)
-                .choiceSelected(chosen).textAnswer(typedAnswer).isCorrect(correct).build());
-        }
-
-        if (!comparisonReports.isEmpty()) {
-            String aiNote = passage.getOcrCorrectionNote();
-            passage.setOcrCorrectionNote(String.join("\n\n", comparisonReports)
-                + (aiNote == null || aiNote.isBlank() ? "" : "\n\nAvis de l'IA : " + aiNote));
-        }
-        passage.setScore(score);
-        passage.setMaxScore(maxScore > 0 ? maxScore : 1);
-        passage.setIsSubmitted(true);
-        passage.setSubmittedAt(LocalDateTime.now());
-        passageRepo.save(passage);
-
         return ResponseEntity.ok(buildResultat(passage, qcm));
+    }
+
+    /** Enregistrement régulier des réponses pendant le devoir. */
+    @PostMapping("/{id}/brouillon")
+    @Transactional
+    public ResponseEntity<Void> brouillon(@PathVariable Long id,
+                                          @RequestBody QcmSubmissionService.Submission input,
+                                          Authentication auth) {
+        User student = userRepo.findByEmail(auth.getName()).orElseThrow();
+        Qcm qcm = qcmRepo.findById(id).orElseThrow();
+        passageRepo.findByQcmAndStudent(qcm, student).ifPresent(p -> submissionService.saveDraft(p, input));
+        return ResponseEntity.noContent().build();
     }
 
     /** Nom, prénom, date de naissance et niveau sont obligatoires avant de commencer le devoir. */
@@ -405,63 +336,23 @@ public class QcmEtudiantController {
         return null;
     }
 
-    private static final String PLACEHOLDER_ANSWER = "Référence de correction fournie par le professeur.";
-
-    /** Valeurs attendues pour une question « cas pratique » : sa correction propre, sinon celle du devoir. */
-    private List<CorrectionComparisonService.ExpectedValue> expectedFor(QcmQuestion question, Qcm qcm) {
-        String correction = firstNonBlank(
-            PLACEHOLDER_ANSWER.equals(question.getExpectedAnswer()) ? null : question.getExpectedAnswer(),
-            question.getCorrectionData(), qcm.getCorrectionText());
-        String subject = firstNonBlank(qcm.getSubjectText(), question.getQuestionText());
-        return comparisonService.expectedValues(correction, subject);
-    }
 
     private static String firstNonBlank(String... values) {
         for (String v : values) if (v != null && !v.isBlank()) return v;
         return null;
     }
 
-    private static String joinTexts(String... texts) {
-        return java.util.Arrays.stream(texts).filter(t -> t != null && !t.isBlank())
-            .collect(Collectors.joining("\n"));
-    }
 
-    private String textAnswerOf(ReponseInput response) {
-        if (response == null || response.values == null) return null;
-        String answer = response.values.get("answer");
-        return answer == null || answer.isBlank() ? null : answer.trim();
-    }
 
     private boolean isPaperCase(QcmQuestion question) {
-        return "CASE".equalsIgnoreCase(question.getQuestionType())
-            || ("PRACTICAL".equalsIgnoreCase(question.getQuestionType())
-                && question.getCaseScenario() != null && !question.getCaseScenario().isBlank());
+        return submissionService.isPaperCase(question);
     }
 
-    private int ocrScoreForQuestion(QcmPassage passage, QcmQuestion question, Qcm qcm) {
-        if (passage.getOcrScore() == null) return 0;
-        int caseMax = qcm.getQuestions().stream().filter(this::isPaperCase)
-            .mapToInt(QcmQuestion::getPoints).sum();
-        if (caseMax <= 0) return 0;
-        return (int) Math.round(passage.getOcrScore() * question.getPoints() / (double) caseMax);
-    }
 
     private boolean hasPaperCase(Qcm qcm) {
-        return qcm.getQuestions().stream().anyMatch(question ->
-            "CASE".equalsIgnoreCase(question.getQuestionType())
-                || ("PRACTICAL".equalsIgnoreCase(question.getQuestionType())
-                    && question.getCaseScenario() != null && !question.getCaseScenario().isBlank()));
+        return submissionService.hasPaperCase(qcm);
     }
 
-    private void refreshDocumentScore(QcmPassage passage, Qcm qcm) {
-        if (!qcm.getQuestions().isEmpty() || passage.getManualScore() != null) return;
-        var expected = comparisonService.expectedValues(qcm.getCorrectionText(), qcm.getSubjectText());
-        if (expected.isEmpty()) return;
-        var result = comparisonService.compare(expected, joinTexts(passage.getDocumentAnswer(), passage.getOcrExtractedText()));
-        passage.setScore(result.matched());
-        passage.setMaxScore(result.total());
-        passageRepo.save(passage);
-    }
 
     private List<String> practicalLabels(String correctionData) {
         if (correctionData == null || correctionData.isBlank()) return List.of();
@@ -473,49 +364,8 @@ public class QcmEtudiantController {
         }
     }
 
-    private double gradePractical(QcmQuestion question, Map<String, String> submitted) {
-        if (submitted == null || submitted.isEmpty()) return 0;
-        try {
-            Map<String, Object> expected = objectMapper.readValue(question.getCorrectionData(), new TypeReference<>() {});
-            if (expected.isEmpty() || submitted.size() != expected.size()) return 0;
-            long valid = expected.entrySet().stream().filter(entry -> {
-                String actual = submitted.get(entry.getKey());
-                if (actual == null || actual.isBlank()) return false;
-                try {
-                    double expectedValue = parseNumber(String.valueOf(entry.getValue()));
-                    double actualValue = parseNumber(actual);
-                    double tolerance = Math.max(0.001, Math.abs(expectedValue) * 0.001);
-                    return Math.abs(expectedValue - actualValue) <= tolerance;
-                } catch (NumberFormatException ex) {
-                    return normalize(actual).equals(normalize(String.valueOf(entry.getValue())));
-                }
-            }).count();
-            return (double) valid / expected.size();
-        } catch (Exception e) {
-            return 0;
-        }
-    }
 
-    private double parseNumber(String value) {
-        String normalized = value == null ? "" : value.trim().replaceAll("\\s+", "")
-            .replaceAll("[^0-9,.-]", "");
-        int comma = normalized.lastIndexOf(',');
-        int dot = normalized.lastIndexOf('.');
-        if (comma >= 0 && dot >= 0) {
-            normalized = comma > dot
-                ? normalized.replace(".", "").replace(',', '.')
-                : normalized.replace(",", "");
-        } else if (comma >= 0 && normalized.indexOf(',') != comma) {
-            normalized = normalized.replace(",", "");
-        } else if (comma >= 0) {
-            normalized = normalized.replace(',', '.');
-        }
-        return Double.parseDouble(normalized);
-    }
 
-    private String normalize(String value) {
-        return value == null ? "" : value.trim().toLowerCase().replaceAll("\\s+", " ");
-    }
 
     // ── Voir mon résultat ──────────────────────────────────────────────────
 
@@ -525,12 +375,13 @@ public class QcmEtudiantController {
         User student = userRepo.findByEmail(auth.getName()).orElseThrow();
         Qcm qcm = qcmRepo.findById(id).orElseThrow();
         QcmPassage passage = passageRepo.findByQcmAndStudent(qcm, student)
+            .map(p -> { submissionService.autoSubmitIfExpired(p); return p; })
             .filter(p -> Boolean.TRUE.equals(p.getIsSubmitted()))
             .orElseThrow(() -> new RuntimeException("Résultat non disponible"));
         if (isStillLocked(passage)) {
             throw new ResultLockedException(computeUnlockAt(passage));
         }
-        refreshDocumentScore(passage, qcm);
+        submissionService.refreshDocumentScore(passage, qcm);
         return ResponseEntity.ok(buildResultat(passage, qcm));
     }
 

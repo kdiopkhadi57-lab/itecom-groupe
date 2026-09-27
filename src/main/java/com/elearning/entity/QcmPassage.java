@@ -29,6 +29,12 @@ public class QcmPassage {
 
     private LocalDateTime submittedAt;
 
+    // Réponses enregistrées au fil du devoir (JSON), utilisées si la soumission n'aboutit pas
+    @Column(columnDefinition = "TEXT")
+    private String draftAnswers;
+
+    private LocalDateTime draftSavedAt;
+
     // Identité saisie par l'étudiant au début du devoir
     private String declaredLastName;
     private String declaredFirstName;

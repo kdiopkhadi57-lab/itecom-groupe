@@ -46,6 +46,7 @@ public class QcmController {
     private final DocumentTextExtractorService documentTextExtractorService;
     private final FileStorageService fileStorageService;
     private final PasswordEncoder passwordEncoder;
+    private final com.elearning.service.QcmSubmissionService submissionService;
 
     // ── DTOs ───────────────────────────────────────────────────────────────
 
@@ -799,17 +800,22 @@ public class QcmController {
     // ── Résultats des étudiants ────────────────────────────────────────────
 
     @GetMapping("/{id}/resultats")
-    @Transactional(readOnly = true)
+    @Transactional
     public ResponseEntity<List<PassageResultDto>> resultats(@PathVariable Long id) {
         Qcm qcm = qcmRepo.findById(id).orElseThrow();
-        Map<String, QcmPassage> submittedByEmail = passageRepo.findByQcmAndIsSubmittedTrue(qcm).stream()
-            .collect(Collectors.toMap(p -> p.getStudent().getEmail().toLowerCase(), p -> p, (a, b) -> a));
+        // Toutes les copies (rendues ou en cours) ; celles dont le temps est écoulé sont soumises d'abord
+        List<QcmPassage> passages = passageRepo.findByQcm(qcm);
+        passages.forEach(submissionService::autoSubmitIfExpired);
+        Map<String, QcmPassage> passageByEmail = passages.stream()
+            .collect(Collectors.toMap(p -> p.getStudent().getEmail().toLowerCase(), p -> p,
+                // Plusieurs passages pour un même étudiant : on garde la copie rendue
+                (a, b) -> Boolean.TRUE.equals(a.getIsSubmitted()) ? a : b));
         List<PassageResultDto> results = new ArrayList<>();
         java.util.Set<String> listedEmails = new java.util.HashSet<>();
         for (QcmStudent assigned : qcm.getAssignedStudents()) {
             String email = assigned.getStudentEmail().toLowerCase();
             listedEmails.add(email);
-            QcmPassage passage = submittedByEmail.get(email);
+            QcmPassage passage = passageByEmail.get(email);
             PassageResultDto dto = toPassageResult(assigned.getStudentName(), assigned.getStudentEmail(), passage, qcm);
             // Valeurs de la liste du professeur si l'étudiant n'a encore rien saisi
             if (dto.lastName == null) dto.lastName = assigned.getLastName();
@@ -817,7 +823,7 @@ public class QcmController {
             if (dto.studentLevel == null) dto.studentLevel = assigned.getLevel();
             results.add(dto);
         }
-        submittedByEmail.forEach((email, passage) -> {
+        passageByEmail.forEach((email, passage) -> {
             if (!listedEmails.contains(email)) {
                 results.add(toPassageResult(passage.getStudent().getFirstName() + " " + passage.getStudent().getLastName(),
                     passage.getStudent().getEmail(), passage, qcm));
@@ -922,9 +928,10 @@ public class QcmController {
     // ── Export Excel des résultats (liste étudiants + notes à uploader) ───
 
     @GetMapping("/{id}/report")
-    @Transactional(readOnly = true)
+    @Transactional
     public ResponseEntity<byte[]> downloadReport(@PathVariable Long id) throws IOException {
         Qcm qcm = qcmRepo.findById(id).orElseThrow();
+        passageRepo.findByQcm(qcm).forEach(submissionService::autoSubmitIfExpired);
         List<QcmPassage> submitted = passageRepo.findByQcmAndIsSubmittedTrue(qcm);
         Map<String, QcmPassage> byEmail = submitted.stream()
             .collect(Collectors.toMap(p -> p.getStudent().getEmail().toLowerCase(), p -> p, (a, b) -> a));

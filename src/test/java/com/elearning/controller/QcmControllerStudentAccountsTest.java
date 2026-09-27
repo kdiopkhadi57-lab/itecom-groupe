@@ -36,7 +36,7 @@ class QcmControllerStudentAccountsTest {
     void setUp() {
         controller = new QcmController(qcmRepo, mock(QcmPassageRepository.class), userRepo,
             mock(StudentListParserService.class), mock(DocumentTextExtractorService.class),
-            mock(FileStorageService.class), encoder);
+            mock(FileStorageService.class), encoder, mock(com.elearning.service.QcmSubmissionService.class));
         User prof = User.builder().email("prof@test.com").firstName("P").lastName("Prof")
             .password("x").role(Role.ROLE_TEACHER).build();
         when(userRepo.findByEmail(any())).thenReturn(Optional.empty());

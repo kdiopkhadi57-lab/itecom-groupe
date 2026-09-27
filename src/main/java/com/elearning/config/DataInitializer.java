@@ -316,6 +316,8 @@ private boolean isMysqlDatabase() {
             ensureMysqlColumn("qcm_passages", "declared_first_name", "VARCHAR(255)");
             ensureMysqlColumn("qcm_passages", "birth_date", "DATE");
             ensureMysqlColumn("qcm_passages", "declared_level", "VARCHAR(255)");
+            ensureMysqlColumn("qcm_passages", "draft_answers", "TEXT");
+            ensureMysqlColumn("qcm_passages", "draft_saved_at", "DATETIME");
             ensureMysqlColumn("qcm_students", "first_name", "VARCHAR(255)");
             ensureMysqlColumn("qcm_students", "last_name", "VARCHAR(255)");
             ensureMysqlColumn("qcm_students", "student_level", "VARCHAR(255)");
@@ -348,6 +350,8 @@ private boolean isMysqlDatabase() {
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS declared_first_name VARCHAR(255)");
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS birth_date DATE");
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS declared_level VARCHAR(255)");
+        jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS draft_answers TEXT");
+        jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS draft_saved_at TIMESTAMP");
         jdbcTemplate.execute("ALTER TABLE qcm_students ADD COLUMN IF NOT EXISTS first_name VARCHAR(255)");
         jdbcTemplate.execute("ALTER TABLE qcm_students ADD COLUMN IF NOT EXISTS last_name VARCHAR(255)");
         jdbcTemplate.execute("ALTER TABLE qcm_students ADD COLUMN IF NOT EXISTS student_level VARCHAR(255)");

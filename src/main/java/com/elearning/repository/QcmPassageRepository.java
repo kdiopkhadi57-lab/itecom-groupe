@@ -10,5 +10,7 @@ import java.util.Optional;
 public interface QcmPassageRepository extends JpaRepository<QcmPassage, Long> {
     Optional<QcmPassage> findByQcmAndStudent(Qcm qcm, User student);
     List<QcmPassage> findByQcmAndIsSubmittedTrue(Qcm qcm);
+    List<QcmPassage> findByQcm(Qcm qcm);
+    List<QcmPassage> findByIsSubmittedFalseAndStartedAtIsNotNull();
     List<QcmPassage> findByStudentOrderByStartedAtDesc(User student);
 }
