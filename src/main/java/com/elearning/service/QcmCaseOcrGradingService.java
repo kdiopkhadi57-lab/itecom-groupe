@@ -56,6 +56,59 @@ public class QcmCaseOcrGradingService {
         }
     }
 
+    /** Ligne de grille à retrouver sur la copie : clé « idQuestion:idLigne », libellé et énoncé (jamais la réponse). */
+    public record RowToRead(String key, String label, String question) {}
+
+    public record Extraction(Map<String, String> answers, String transcription) {}
+
+    /**
+     * Lecture de la copie (PDF texte ou scanné, photo) et extraction des résultats de l'étudiant
+     * sous forme JSON, une valeur par ligne de la grille de correction.
+     */
+    public Extraction extractAnswers(List<RowToRead> rows, List<ScannedFile> studentFiles) {
+        if (client == null || studentFiles.isEmpty()) return new Extraction(Map.of(), "");
+        StringBuilder prompt = new StringBuilder("""
+            Tu lis la copie d'un étudiant (PDF ou photo, manuscrite ou imprimée). Lis tout : texte, calculs, tableaux
+            (chaque ligne et chaque colonne), annotations. Pour chaque ligne demandée ci-dessous, recopie le RÉSULTAT FINAL
+            que l'étudiant a donné pour cette ligne, exactement comme il l'a écrit (chiffres, séparateurs, unité).
+            Si l'étudiant n'a pas répondu à une ligne, ou si c'est illisible, mets null. N'invente jamais une valeur,
+            ne corrige pas l'étudiant et ne calcule rien toi-même.
+
+            LIGNES À RETROUVER :
+            """);
+        for (RowToRead r : rows) {
+            prompt.append("- ").append(r.key()).append(" (").append(r.label()).append(")")
+                .append(r.question() == null || r.question().isBlank() ? "" : " : " + r.question()).append("\n");
+        }
+        prompt.append("""
+
+            Réponds uniquement avec ce JSON :
+            {"answers": {"<clé>": "<valeur écrite par l'étudiant ou null>", ...}, "transcription": "<transcription fidèle de la copie, tableaux ligne par ligne avec des | >"}
+            """);
+        List<ContentBlockParam> content = new ArrayList<>();
+        content.add(ContentBlockParam.ofText(TextBlockParam.builder().text(prompt.toString()).build()));
+        for (ScannedFile file : studentFiles) content.add(toContentBlock(file));
+        try {
+            MessageCreateParams params = MessageCreateParams.builder()
+                .model(Model.of(model)).maxTokens(12000L)
+                .addUserMessageOfBlockParams(content).build();
+            Message response = client.messages().create(params);
+            String raw = response.content().stream().flatMap(block -> block.text().stream())
+                .map(TextBlock::text).findFirst().orElse("{}");
+            int start = raw.indexOf('{');
+            int end = raw.lastIndexOf('}');
+            JsonNode node = objectMapper.readTree(raw.substring(start, end + 1));
+            Map<String, String> answers = new java.util.LinkedHashMap<>();
+            node.path("answers").fields().forEachRemaining(e -> {
+                if (!e.getValue().isNull() && !e.getValue().asText().isBlank()) answers.put(e.getKey(), e.getValue().asText().trim());
+            });
+            return new Extraction(answers, node.path("transcription").asText(""));
+        } catch (Exception e) {
+            log.error("Extraction des réponses de la copie impossible : {}", e.getMessage());
+            return new Extraction(Map.of(), "");
+        }
+    }
+
     /** Transcription seule d'une copie scannée (devoir sans question « cas pratique »). */
     public String transcribe(List<ScannedFile> studentFiles) {
         if (client == null || studentFiles.isEmpty()) return "";

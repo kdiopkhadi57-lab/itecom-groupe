@@ -25,7 +25,8 @@ class QcmSubmissionServiceTest {
     @BeforeEach
     void setUp() {
         service = new QcmSubmissionService(passageRepo, new ObjectMapper(),
-            mock(QcmCaseOcrGradingService.class), new CorrectionComparisonService());
+            mock(QcmCaseOcrGradingService.class), new CorrectionComparisonService(),
+            new CorrectionGridService(new CorrectionComparisonService(), new ObjectMapper()));
         when(passageRepo.save(any(QcmPassage.class))).thenAnswer(inv -> inv.getArgument(0));
 
         qcm = Qcm.builder().id(1L).title("Devoir").estimatedDurationMinutes(30).build();

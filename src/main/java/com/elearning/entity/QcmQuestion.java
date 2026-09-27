@@ -40,6 +40,10 @@ public class QcmQuestion {
     @Column(columnDefinition = "TEXT")
     private String expectedAnswer;
 
+    // Grille de correction ligne par ligne (JSON), validée ou modifiée par le professeur
+    @Column(columnDefinition = "TEXT")
+    private String correctionGrid;
+
     @OneToMany(mappedBy = "question", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("orderIndex ASC")
     @Builder.Default

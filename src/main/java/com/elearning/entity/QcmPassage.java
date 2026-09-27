@@ -29,6 +29,14 @@ public class QcmPassage {
 
     private LocalDateTime submittedAt;
 
+    // Valeurs lues sur la copie PDF / image, par ligne de grille (JSON « idQuestion:idLigne » → valeur)
+    @Column(columnDefinition = "TEXT")
+    private String extractedAnswers;
+
+    // Détail de la correction ligne par ligne (JSON)
+    @Column(columnDefinition = "TEXT")
+    private String correctionDetail;
+
     // Réponses enregistrées au fil du devoir (JSON), utilisées si la soumission n'aboutit pas
     @Column(columnDefinition = "TEXT")
     private String draftAnswers;

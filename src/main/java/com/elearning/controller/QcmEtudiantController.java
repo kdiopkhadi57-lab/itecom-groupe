@@ -17,6 +17,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.elearning.service.FileStorageService;
 import com.elearning.service.QcmCaseOcrGradingService;
 import com.elearning.service.QcmSubmissionService;
+import com.elearning.service.CorrectionGridService;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -38,6 +39,7 @@ public class QcmEtudiantController {
     private final FileStorageService fileStorageService;
     private final QcmCaseOcrGradingService caseOcrGradingService;
     private final QcmSubmissionService submissionService;
+    private final CorrectionGridService gridService;
 
     private static final int DEFAULT_ESTIMATED_DURATION_MINUTES = 30;
 
@@ -57,7 +59,8 @@ public class QcmEtudiantController {
     // ── DTOs ───────────────────────────────────────────────────────────────
 
     @Data static class ChoiceDto    { Long id; String choiceText; Integer orderIndex; }
-    @Data static class QuestionDto  { Long id; String questionText; Integer points; Integer orderIndex; String questionType; String caseScenario; List<String> valueLabels; List<ChoiceDto> choices; }
+    @Data static class GridRowDto   { String id; String label; String question; }
+    @Data static class QuestionDto  { Long id; String questionText; Integer points; Integer orderIndex; String questionType; String caseScenario; List<String> valueLabels; List<ChoiceDto> choices; List<GridRowDto> gridRows; }
     @Data static class QcmListDto   { Long id; String title; String description; String professorName; int questionCount; boolean alreadyTaken; String createdAt; Integer score; Integer maxScore; }
     @Data static class QcmTakeDto   { Long id; String title; String description; String subjectFileUrl; String subjectText; Long passageId; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String paperCorrectionUrl; String paperCorrectionFilename; String startedAt; String draftAnswers; List<QuestionDto> questions; }
 
@@ -224,6 +227,14 @@ public class QcmEtudiantController {
             qd.questionType = q.getQuestionType();
             qd.caseScenario = q.getCaseScenario();
             qd.valueLabels = practicalLabels(q.getCorrectionData());
+            if (isPaperCase(q)) {
+                // Uniquement l'identifiant, le libellé et l'énoncé : jamais la valeur attendue
+                qd.gridRows = gridService.gridFor(q, qcm).stream().map(row -> {
+                    GridRowDto g = new GridRowDto();
+                    g.id = row.id(); g.label = row.label(); g.question = row.question();
+                    return g;
+                }).collect(Collectors.toList());
+            }
             // On N'envoie PAS isCorrect à l'étudiant
             qd.choices = q.getChoices().stream().map(c -> {
                 ChoiceDto cd = new ChoiceDto();
@@ -259,7 +270,28 @@ public class QcmEtudiantController {
             passageRepo.save(passage);
             QcmCaseOcrGradingService.ScannedFile scanned =
                 new QcmCaseOcrGradingService.ScannedFile(file.getBytes(), file.getContentType(), file.getOriginalFilename());
-            if (!hasPaperCase(qcm)) {
+            // Lignes de grille à lire sur la copie (clé « idQuestion:idLigne »)
+            List<QcmCaseOcrGradingService.RowToRead> rows = new ArrayList<>();
+            for (QcmQuestion q : qcm.getQuestions()) {
+                if (!isPaperCase(q)) continue;
+                for (CorrectionGridService.GridRow row : gridService.gridFor(q, qcm)) {
+                    rows.add(new QcmCaseOcrGradingService.RowToRead(q.getId() + ":" + row.id(), row.label(), row.question()));
+                }
+            }
+            Map<String, Map<String, String>> readValues = new java.util.LinkedHashMap<>();
+            if (!rows.isEmpty()) {
+                // Copie PDF ou image : résultats extraits en JSON, une valeur par ligne de la grille
+                QcmCaseOcrGradingService.Extraction extraction = caseOcrGradingService.extractAnswers(rows, List.of(scanned));
+                passage.setExtractedAnswers(objectMapper.writeValueAsString(extraction.answers()));
+                passage.setOcrExtractedText(extraction.transcription());
+                passage.setOcrScore(null);
+                passageRepo.save(passage);
+                extraction.answers().forEach((key, value) -> {
+                    int sep = key.indexOf(':');
+                    if (sep > 0) readValues.computeIfAbsent(key.substring(0, sep), k -> new java.util.LinkedHashMap<>())
+                        .put(key.substring(sep + 1), value);
+                });
+            } else if (!hasPaperCase(qcm)) {
                 passage.setOcrExtractedText(caseOcrGradingService.transcribe(List.of(scanned)));
                 passageRepo.save(passage);
             } else {
@@ -271,7 +303,8 @@ public class QcmEtudiantController {
                 passage.setMaxScore(grade.maxScore());
                 passageRepo.save(passage);
             }
-            return ResponseEntity.ok(Map.of("url", url, "filename", file.getOriginalFilename()));
+            // Valeurs lues renvoyées à l'étudiant pour qu'il les vérifie (et corrige une erreur de lecture)
+            return ResponseEntity.ok(Map.of("url", url, "filename", file.getOriginalFilename(), "readValues", readValues));
         } catch (java.io.IOException ex) {
             return ResponseEntity.internalServerError().body(Map.of("message", "Impossible d'enregistrer la copie."));
         }
