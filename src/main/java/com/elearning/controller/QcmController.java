@@ -905,7 +905,8 @@ public class QcmController {
             Sheet sheet = wb.createSheet("Résultats");
             CellStyle headerStyle = createReportHeaderStyle(wb);
 
-            String[] headers = {"Nom", "Email", "Score", "Score max", "Pourcentage", "Mention", "Statut", "Date de soumission", "Copie papier", "Observation"};
+            String[] headers = {"Nom", "Prénom", "Date de naissance", "Niveau", "Email", "Score", "Score max", "Pourcentage",
+                "Mention", "Statut", "Date de soumission", "Copie papier", "Observation"};
             Row headerRow = sheet.createRow(0);
             for (int i = 0; i < headers.length; i++) {
                 Cell c = headerRow.createCell(i);
@@ -917,7 +918,7 @@ public class QcmController {
             java.util.Set<String> written = new java.util.HashSet<>();
             if (!qcm.getAssignedStudents().isEmpty()) {
                 for (QcmStudent qs : qcm.getAssignedStudents()) {
-                    rowIdx = writeReportRow(sheet, rowIdx, qs.getStudentName(), qs.getStudentEmail(),
+                    rowIdx = writeReportRow(sheet, rowIdx, qs, qs.getStudentName(), qs.getStudentEmail(),
                         byEmail.get(qs.getStudentEmail().toLowerCase()));
                     written.add(qs.getStudentEmail().toLowerCase());
                 }
@@ -926,7 +927,7 @@ public class QcmController {
             for (QcmPassage p : submitted) {
                 String email = p.getStudent().getEmail().toLowerCase();
                 if (written.contains(email)) continue;
-                rowIdx = writeReportRow(sheet, rowIdx,
+                rowIdx = writeReportRow(sheet, rowIdx, null,
                     p.getStudent().getFirstName() + " " + p.getStudent().getLastName(),
                     p.getStudent().getEmail(), p);
                 written.add(email);
@@ -958,27 +959,49 @@ public class QcmController {
         return style;
     }
 
-    private int writeReportRow(Sheet sheet, int rowIdx, String name, String email, QcmPassage passage) {
+    private int writeReportRow(Sheet sheet, int rowIdx, QcmStudent assigned, String name, String email, QcmPassage passage) {
+        // Identité : saisie par l'étudiant au début du devoir, sinon liste du professeur, sinon « Prénom(s) Nom »
+        int lastSpace = name == null ? -1 : name.trim().lastIndexOf(' ');
+        String lastName = firstNonBlank(passage != null ? passage.getDeclaredLastName() : null,
+            assigned != null ? assigned.getLastName() : null,
+            lastSpace > 0 ? name.trim().substring(lastSpace + 1) : name);
+        String firstName = firstNonBlank(passage != null ? passage.getDeclaredFirstName() : null,
+            assigned != null ? assigned.getFirstName() : null,
+            lastSpace > 0 ? name.trim().substring(0, lastSpace) : null);
+        String level = firstNonBlank(passage != null ? passage.getDeclaredLevel() : null,
+            assigned != null ? assigned.getLevel() : null);
+        String birthDate = passage != null && passage.getBirthDate() != null
+            ? passage.getBirthDate().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")) : "";
+
         Row row = sheet.createRow(rowIdx);
-        row.createCell(0).setCellValue(name);
-        row.createCell(1).setCellValue(email);
-        if (passage != null) {
+        row.createCell(0).setCellValue(lastName != null ? lastName : "");
+        row.createCell(1).setCellValue(firstName != null ? firstName : "");
+        row.createCell(2).setCellValue(birthDate);
+        row.createCell(3).setCellValue(level != null ? level : "");
+        row.createCell(4).setCellValue(email);
+        boolean submitted = passage != null && Boolean.TRUE.equals(passage.getIsSubmitted());
+        if (submitted) {
             int score = passage.getScore() != null ? passage.getScore() : 0;
             int maxScore = passage.getMaxScore() != null ? passage.getMaxScore() : 0;
             double pct = maxScore > 0 ? (score * 100.0) / maxScore : 0;
-            row.createCell(2).setCellValue(score);
-            row.createCell(3).setCellValue(maxScore);
-            row.createCell(4).setCellValue(String.format("%.0f%%", pct));
-            row.createCell(5).setCellValue(pct >= 80 ? "Excellent" : pct >= 60 ? "Bien" : pct >= 50 ? "Passable" : "Insuffisant");
-            row.createCell(6).setCellValue("Soumis");
-            row.createCell(7).setCellValue(passage.getSubmittedAt() != null ? passage.getSubmittedAt().toString() : "");
-            row.createCell(8).setCellValue(passage.getPaperCorrectionUrl() != null ? passage.getPaperCorrectionUrl() : "");
-            row.createCell(9).setCellValue(passage.getManualCorrectionNote() != null ? passage.getManualCorrectionNote() : "");
+            row.createCell(5).setCellValue(score);
+            row.createCell(6).setCellValue(maxScore);
+            row.createCell(7).setCellValue(String.format("%.0f%%", pct));
+            row.createCell(8).setCellValue(pct >= 80 ? "Excellent" : pct >= 60 ? "Bien" : pct >= 50 ? "Passable" : "Insuffisant");
+            row.createCell(9).setCellValue("Soumis");
+            row.createCell(10).setCellValue(passage.getSubmittedAt() != null
+                ? passage.getSubmittedAt().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")) : "");
+            row.createCell(11).setCellValue(passage.getPaperCorrectionUrl() != null ? passage.getPaperCorrectionUrl() : "");
+            row.createCell(12).setCellValue(passage.getManualCorrectionNote() != null ? passage.getManualCorrectionNote() : "");
         } else {
-            row.createCell(2); row.createCell(3); row.createCell(4); row.createCell(5);
-            row.createCell(6).setCellValue("Non soumis");
-            row.createCell(7); row.createCell(8); row.createCell(9);
+            for (int c = 5; c <= 12; c++) row.createCell(c);
+            row.getCell(9).setCellValue("Non soumis");
         }
         return rowIdx + 1;
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String v : values) if (v != null && !v.isBlank()) return v.trim();
+        return null;
     }
 }
