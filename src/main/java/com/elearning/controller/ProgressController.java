@@ -63,6 +63,31 @@ public class ProgressController {
         return ResponseEntity.ok(ApiResponse.success("Progression mise à jour", null));
     }
 
+    /** Temps maximal accepté par envoi : le lecteur envoie un battement toutes les 30 s. */
+    private static final int MAX_SECONDS_PER_PING = 120;
+
+    /**
+     * Ajoute du temps passé sur une leçon (battements envoyés par le lecteur de cours
+     * tant que la page est visible). Sert au suivi « temps passé » côté professeur.
+     */
+    @PostMapping("/lesson/{lessonId}/time")
+    public ResponseEntity<ApiResponse<String>> addTimeSpent(
+            @PathVariable Long lessonId,
+            @RequestBody Map<String, Integer> body,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        int seconds = Math.min(MAX_SECONDS_PER_PING, Math.max(0, body.getOrDefault("seconds", 0)));
+        if (seconds == 0) return ResponseEntity.ok(ApiResponse.success("Aucun temps ajouté", null));
+        User user = userRepository.findByEmail(userDetails.getUsername()).orElseThrow();
+        Lesson lesson = lessonRepository.findById(lessonId).orElseThrow();
+
+        Progress progress = progressRepository.findByUserAndLesson(user, lesson)
+            .orElse(Progress.builder().user(user).lesson(lesson).course(lesson.getCourse()).percentage(0.0).build());
+        int current = progress.getWatchedSeconds() == null ? 0 : progress.getWatchedSeconds();
+        progress.setWatchedSeconds(current + seconds);
+        progressRepository.save(progress);
+        return ResponseEntity.ok(ApiResponse.success("Temps enregistré", null));
+    }
+
     /** Sauvegarde le travail en cours (code / projet de packages-classes) sur une leçon ou un exercice. */
     @PostMapping("/lesson/{lessonId}/save-code")
     public ResponseEntity<ApiResponse<String>> saveCode(

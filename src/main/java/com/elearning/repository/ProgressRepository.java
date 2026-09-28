@@ -13,6 +13,7 @@ import java.util.Optional;
 @Repository
 public interface ProgressRepository extends JpaRepository<Progress, Long> {
     List<Progress> findByUserAndCourse(User user, Course course);
+    List<Progress> findByCourse(Course course);
     Optional<Progress> findByUserAndLesson(User user, Lesson lesson);
 
     @Query("SELECT COUNT(p) FROM Progress p WHERE p.user = :user AND p.course = :course AND p.completed = true")
