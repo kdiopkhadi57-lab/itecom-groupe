@@ -41,28 +41,28 @@ public class FormationDataSeeder implements ApplicationRunner {
         // Comptabilité & Gestion - au moins 3 cours
         ensureCourse("Comptabilité Générale - Les Fondamentaux",
             "Apprenez les principes de base de la comptabilité générale : plan comptable, bilan, compte de résultat et écritures comptables.",
-            "comptabilite", "BEGINNER", comptaTeacher, comptaCours1Lessons());
+            "comptabilite", "L1", comptaTeacher, comptaCours1Lessons());
 
         ensureCourse("Gestion Financière et Analyse de Bilan",
             "Maîtrisez l'analyse financière d'une entreprise : lecture des états financiers, ratios financiers et tableaux de financement.",
-            "comptabilite", "INTERMEDIATE", comptaTeacher, comptaCours2Lessons());
+            "comptabilite", "L2", comptaTeacher, comptaCours2Lessons());
 
         ensureCourse("Fiscalité d'Entreprise et Déclarations",
             "Comprenez le système fiscal des entreprises : impôt sur les sociétés, TVA, charges sociales et obligations déclaratives.",
-            "comptabilite", "INTERMEDIATE", comptaTeacher, comptaCours3Lessons());
+            "comptabilite", "L2", comptaTeacher, comptaCours3Lessons());
 
         // Sage-Femme d'État - au moins 3 cours
         ensureCourse("Anatomie et Physiologie de la Grossesse",
             "Découvrez l'anatomie de l'appareil reproducteur féminin, la physiologie de la grossesse et le développement fœtal.",
-            "sage-femme", "BEGINNER", sageFemmeTeacher, sageFemmeCours1Lessons());
+            "sage-femme", "L1", sageFemmeTeacher, sageFemmeCours1Lessons());
 
         ensureCourse("Suivi Prénatal et Accouchement",
             "Apprenez le protocole de consultation prénatale, les phases de l'accouchement et les techniques d'accompagnement de la parturiente.",
-            "sage-femme", "INTERMEDIATE", sageFemmeTeacher, sageFemmeCours2Lessons());
+            "sage-femme", "L2", sageFemmeTeacher, sageFemmeCours2Lessons());
 
         ensureCourse("Soins du Nouveau-né et Post-partum",
             "Maîtrisez l'examen clinique du nouveau-né, l'allaitement maternel, la surveillance du post-partum et le suivi pédiatrique précoce.",
-            "sage-femme", "INTERMEDIATE", sageFemmeTeacher, sageFemmeCours3Lessons());
+            "sage-femme", "L2", sageFemmeTeacher, sageFemmeCours3Lessons());
 
         // Étudiants - formation Comptabilité & Gestion
         List<User> comptaStudents = List.of(
@@ -91,28 +91,28 @@ public class FormationDataSeeder implements ApplicationRunner {
         // Marketing Digital - au moins 3 cours
         ensureCourse("Fondamentaux du Marketing Digital",
             "Découvrez les bases du marketing digital : écosystème digital, tunnel de conversion, persona d'acheteur et stratégie de contenu.",
-            "marketing-digital", "BEGINNER", marketingTeacher, marketingCours1Lessons());
+            "marketing-digital", "L1", marketingTeacher, marketingCours1Lessons());
 
         ensureCourse("SEO et Growth Marketing",
             "Maîtrisez le référencement naturel (SEO) et les leviers du growth marketing pour générer du trafic qualifié durablement.",
-            "marketing-digital", "INTERMEDIATE", marketingTeacher, marketingCours2Lessons());
+            "marketing-digital", "L2", marketingTeacher, marketingCours2Lessons());
 
         ensureCourse("Réseaux Sociaux et Publicité en Ligne",
             "Apprenez à construire une présence efficace sur les réseaux sociaux et à piloter des campagnes publicitaires rentables (Facebook, Instagram, TikTok).",
-            "marketing-digital", "INTERMEDIATE", marketingTeacher, marketingCours3Lessons());
+            "marketing-digital", "L2", marketingTeacher, marketingCours3Lessons());
 
         // Développement Personnel - au moins 3 cours
         ensureCourse("Les Fondations du Développement Personnel",
             "Posez les bases de votre développement personnel : état d'esprit de croissance, roue de la vie, valeurs et objectifs SMART.",
-            "developpement-personnel", "BEGINNER", devPersoTeacher, devPersoCours1Lessons());
+            "developpement-personnel", "L1", devPersoTeacher, devPersoCours1Lessons());
 
         ensureCourse("Gestion du Temps et Productivité",
             "Apprenez à prioriser, vous concentrer et organiser votre semaine grâce à la matrice d'Eisenhower, la technique Pomodoro et la méthode GTD.",
-            "developpement-personnel", "INTERMEDIATE", devPersoTeacher, devPersoCours2Lessons());
+            "developpement-personnel", "L2", devPersoTeacher, devPersoCours2Lessons());
 
         ensureCourse("Confiance en Soi et Intelligence Émotionnelle",
             "Développez votre confiance en soi et votre intelligence émotionnelle grâce à la communication assertive et la méthode DESC.",
-            "developpement-personnel", "INTERMEDIATE", devPersoTeacher, devPersoCours3Lessons());
+            "developpement-personnel", "L2", devPersoTeacher, devPersoCours3Lessons());
 
         // Étudiants - formation Marketing Digital
         List<User> marketingStudents = List.of(

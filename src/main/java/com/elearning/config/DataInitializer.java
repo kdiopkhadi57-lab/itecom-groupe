@@ -62,6 +62,7 @@ public class DataInitializer implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         ensureQcmSchema();
         ensureVirtualClassesTable();
+        migrateCourseLevelsToLmd();
         reextractFlattenedDevoirDocuments();
 
         // ── Comptes administrateur ────────────────────────────────────────────
@@ -138,13 +139,13 @@ public class DataInitializer implements ApplicationRunner {
             Role.ROLE_TEACHER, null, "ORANGE_MONEY", "76 412 77 88", "OM-REF-20240707-9934");
 
         if (courseRepository.count() == 0) {
-            createCourse("Introduction à Java", "Apprenez les bases de la programmation orientée objet avec Java", "java", "BEGINNER", teacher);
-            createCourse("Python pour la Data Science", "Maîtrisez Python pour l'analyse de données et le Machine Learning", "python", "INTERMEDIATE", teacher);
-            createCourse("Angular 17 - Guide complet", "Construisez des applications web modernes avec Angular", "angular", "INTERMEDIATE", teacher);
-            createCourse("Spring Boot & REST API", "Développez des APIs REST robustes avec Spring Boot", "springboot", "INTERMEDIATE", teacher);
-            createCourse("SQL & Bases de données", "Maîtrisez SQL de zéro à avancé avec des exercices pratiques", "sql", "BEGINNER", teacher);
-            createCourse("JavaScript Moderne ES2024", "Du JavaScript classique aux dernières fonctionnalités ES2024", "javascript", "BEGINNER", teacher);
-            createCourse("Algorithmes & Structures de données", "Les fondamentaux de l'algorithmique pour tout développeur", "algorithms", "INTERMEDIATE", teacher);
+            createCourse("Introduction à Java", "Apprenez les bases de la programmation orientée objet avec Java", "java", "L1", teacher);
+            createCourse("Python pour la Data Science", "Maîtrisez Python pour l'analyse de données et le Machine Learning", "python", "L2", teacher);
+            createCourse("Angular 17 - Guide complet", "Construisez des applications web modernes avec Angular", "angular", "L2", teacher);
+            createCourse("Spring Boot & REST API", "Développez des APIs REST robustes avec Spring Boot", "springboot", "L2", teacher);
+            createCourse("SQL & Bases de données", "Maîtrisez SQL de zéro à avancé avec des exercices pratiques", "sql", "L1", teacher);
+            createCourse("JavaScript Moderne ES2024", "Du JavaScript classique aux dernières fonctionnalités ES2024", "javascript", "L1", teacher);
+            createCourse("Algorithmes & Structures de données", "Les fondamentaux de l'algorithmique pour tout développeur", "algorithms", "L2", teacher);
         }
 
         if (bookRepository.count() == 0) {
@@ -291,6 +292,18 @@ private boolean isMysqlDatabase() {
         if (!java.nio.file.Files.isRegularFile(path)) return null;
         return documentTextExtractorService.extractLayoutText(path.getFileName().toString(),
             java.nio.file.Files.readAllBytes(path));
+    }
+
+    /** Niveaux des cours au format LMD : Débutant → L1, Intermédiaire → L2, Avancé → L3. */
+    private void migrateCourseLevelsToLmd() {
+        try {
+            int updated = jdbcTemplate.update("UPDATE courses SET level = CASE level WHEN 'BEGINNER' THEN 'L1' "
+                + "WHEN 'INTERMEDIATE' THEN 'L2' WHEN 'ADVANCED' THEN 'L3' ELSE level END "
+                + "WHERE level IN ('BEGINNER', 'INTERMEDIATE', 'ADVANCED')");
+            if (updated > 0) log.info("Niveaux LMD : {} cours convertis", updated);
+        } catch (Exception e) {
+            log.warn("Conversion des niveaux de cours impossible : {}", e.getMessage());
+        }
     }
 
     private void ensureQcmSchema() {

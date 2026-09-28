@@ -78,10 +78,13 @@ public class CourseController {
     }
 
     @PostMapping("/api/teacher/courses")
-    public ResponseEntity<CourseResponse> createCourse(
+    public ResponseEntity<?> createCourse(
             @RequestBody Course courseData,
             @AuthenticationPrincipal UserDetails userDetails) {
         User teacher = userRepository.findByEmail(userDetails.getUsername()).orElseThrow();
+        String level = Course.normalizeLevel(courseData.getLevel());
+        if (level == null) return ResponseEntity.badRequest().body(java.util.Map.of("message", "Niveau invalide : choisissez L1, L2, L3, M1 ou M2."));
+        courseData.setLevel(level);
         courseData.setTeacher(teacher);
         if (courseData.getLessons() != null) {
             courseData.getLessons().forEach(lesson -> lesson.setCourse(courseData));
@@ -91,14 +94,16 @@ public class CourseController {
     }
 
     @PutMapping("/api/teacher/courses/{id}")
-    public ResponseEntity<CourseResponse> updateCourse(
+    public ResponseEntity<?> updateCourse(
             @PathVariable Long id,
             @RequestBody Course courseData) {
         Course course = courseRepository.findById(id).orElseThrow();
+        String level = Course.normalizeLevel(courseData.getLevel());
+        if (level == null) return ResponseEntity.badRequest().body(java.util.Map.of("message", "Niveau invalide : choisissez L1, L2, L3, M1 ou M2."));
         course.setTitle(courseData.getTitle());
         course.setDescription(courseData.getDescription());
         course.setCategory(courseData.getCategory());
-        course.setLevel(courseData.getLevel());
+        course.setLevel(level);
         course.setPublished(courseData.isPublished());
         return ResponseEntity.ok(toCourseResponse(courseRepository.save(course)));
     }
