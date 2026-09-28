@@ -32,4 +32,9 @@ public class VirtualClass {
     @OneToMany(mappedBy = "virtualClass", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<VirtualClassStudent> students = new ArrayList<>();
+
+    /** Connexions enregistrées (présences) ; supprimées avec la séance. */
+    @OneToMany(mappedBy = "virtualClass", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<VirtualClassAttendance> attendances = new ArrayList<>();
 }

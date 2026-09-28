@@ -227,6 +227,23 @@ private boolean isMysqlDatabase() {
                         FOREIGN KEY (virtual_class_id) REFERENCES virtual_classes(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB
                 """);
+            jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS virtual_class_attendances (
+                    id BIGINT NOT NULL AUTO_INCREMENT,
+                    virtual_class_id BIGINT NOT NULL,
+                    user_id BIGINT NULL,
+                    email VARCHAR(255) NOT NULL,
+                    full_name VARCHAR(255),
+                    role VARCHAR(50),
+                    joined_at DATETIME(6) NOT NULL,
+                    last_seen_at DATETIME(6) NULL,
+                    left_at DATETIME(6) NULL,
+                    PRIMARY KEY (id),
+                    KEY idx_vca_virtual_class (virtual_class_id),
+                    CONSTRAINT fk_vca_virtual_class
+                        FOREIGN KEY (virtual_class_id) REFERENCES virtual_classes(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB
+                """);
             // Les tables créées avant ce code avaient des colonnes TEXT (64 Ko max), trop petites pour une vidéo
             ensureMysqlColumnType("virtual_classes", "recording_data", "longtext", "LONGTEXT");
             ensureMysqlColumnType("virtual_classes", "thumbnail_data", "longtext", "LONGTEXT");
@@ -258,6 +275,19 @@ private boolean isMysqlDatabase() {
                 virtual_class_id BIGINT NOT NULL REFERENCES virtual_classes(id) ON DELETE CASCADE,
                 student_name VARCHAR(255) NOT NULL,
                 student_email VARCHAR(255) NOT NULL
+            )
+            """);
+        jdbcTemplate.execute("""
+            CREATE TABLE IF NOT EXISTS virtual_class_attendances (
+                id BIGSERIAL PRIMARY KEY,
+                virtual_class_id BIGINT NOT NULL REFERENCES virtual_classes(id) ON DELETE CASCADE,
+                user_id BIGINT,
+                email VARCHAR(255) NOT NULL,
+                full_name VARCHAR(255),
+                role VARCHAR(50),
+                joined_at TIMESTAMP NOT NULL,
+                last_seen_at TIMESTAMP,
+                left_at TIMESTAMP
             )
             """);
     }
