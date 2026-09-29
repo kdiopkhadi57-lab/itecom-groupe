@@ -1,9 +1,0 @@
-/Users/mac/Desktop/elearning-platform/backend/src/test/java/com/elearning/service/CorrectionComparisonServiceTest.java
-/Users/mac/Desktop/elearning-platform/backend/src/test/java/com/elearning/service/QcmSubmissionServiceTest.java
-/Users/mac/Desktop/elearning-platform/backend/src/test/java/com/elearning/dto/request/ExamQuestionRequestTest.java
-/Users/mac/Desktop/elearning-platform/backend/src/test/java/com/elearning/service/StudentListParserServiceTest.java
-/Users/mac/Desktop/elearning-platform/backend/src/test/java/com/elearning/service/DocumentTextExtractorServiceTest.java
-/Users/mac/Desktop/elearning-platform/backend/src/test/java/com/elearning/controller/QcmControllerTest.java
-/Users/mac/Desktop/elearning-platform/backend/src/test/java/com/elearning/controller/AdminUsersControllerTest.java
-/Users/mac/Desktop/elearning-platform/backend/src/test/java/com/elearning/controller/QcmControllerReportTest.java
-/Users/mac/Desktop/elearning-platform/backend/src/test/java/com/elearning/controller/QcmControllerStudentAccountsTest.java

@@ -1,0 +1,5 @@
+# Fichiers générés par Maven (recompilés par le Dockerfile)
+target/
+
+# Système
+.DS_Store
