@@ -37,7 +37,8 @@ class QcmControllerStudentAccountsTest {
         controller = new QcmController(qcmRepo, mock(QcmPassageRepository.class), userRepo,
             mock(StudentListParserService.class), mock(DocumentTextExtractorService.class),
             mock(FileStorageService.class), encoder, mock(com.elearning.service.QcmSubmissionService.class),
-            mock(com.elearning.service.CorrectionGridService.class), new com.fasterxml.jackson.databind.ObjectMapper());
+            mock(com.elearning.service.CorrectionGridService.class), new com.fasterxml.jackson.databind.ObjectMapper(),
+            mock(com.elearning.service.PaperCopyService.class));
         User prof = User.builder().email("prof@test.com").firstName("P").lastName("Prof")
             .password("x").role(Role.ROLE_TEACHER).build();
         when(userRepo.findByEmail(any())).thenReturn(Optional.empty());

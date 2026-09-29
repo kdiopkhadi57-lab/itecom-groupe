@@ -38,6 +38,8 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                // Reprise d'une réponse asynchrone (lecture de copie) : la requête d'origine a déjà été autorisée
+                .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC).permitAll()
                 .requestMatchers("/api/auth/**", "/api/courses/public/**", "/api-docs/**", "/swagger-ui/**",
                                  "/api/exam/access/**", "/uploads/**", "/api/lookup/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")

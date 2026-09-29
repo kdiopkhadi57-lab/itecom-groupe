@@ -31,7 +31,8 @@ class QcmControllerReportTest {
         QcmController controller = new QcmController(qcmRepo, passageRepo, mock(UserRepository.class),
             mock(StudentListParserService.class), mock(DocumentTextExtractorService.class),
             mock(FileStorageService.class), new BCryptPasswordEncoder(4), mock(com.elearning.service.QcmSubmissionService.class),
-            mock(com.elearning.service.CorrectionGridService.class), new com.fasterxml.jackson.databind.ObjectMapper());
+            mock(com.elearning.service.CorrectionGridService.class), new com.fasterxml.jackson.databind.ObjectMapper(),
+            mock(com.elearning.service.PaperCopyService.class));
 
         Qcm qcm = Qcm.builder().id(1L).title("Devoir test").build();
         qcm.getAssignedStudents().add(QcmStudent.builder().qcm(qcm).studentName("Awa Diop")

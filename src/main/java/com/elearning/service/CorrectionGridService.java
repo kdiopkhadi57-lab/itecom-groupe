@@ -29,12 +29,19 @@ public class CorrectionGridService {
     public record GridRow(String id, String label, String question, double expected, String expectedRaw,
                           double tolerance, double points) {}
 
-    /** Résultat d'une ligne : valeur de l'étudiant, provenance (saisie / copie / texte), points obtenus. */
+    /**
+     * Résultat d'une ligne : valeur de l'étudiant, provenance (saisie / copie / texte), points obtenus.
+     * {@code scannedValue} est la valeur lue sur la copie ; {@code conflict} signale qu'elle diffère de la
+     * valeur saisie (c'est la saisie, vérifiée par l'étudiant, qui est notée).
+     */
     public record RowResult(String id, String label, String question, String expectedRaw, String studentValue,
-                            String source, boolean correct, double points, double maxPoints) {}
+                            String source, boolean correct, double points, double maxPoints,
+                            String scannedValue, boolean conflict) {}
 
     public record GridResult(List<RowResult> rows, double earned, double total) {
         public double ratio() { return total <= 0 ? 0 : earned / total; }
+
+        public long conflicts() { return rows.stream().filter(RowResult::conflict).count(); }
 
         public String report() {
             long ok = rows.stream().filter(RowResult::correct).count();
@@ -44,6 +51,10 @@ public class CorrectionGridService {
                 sb.append("\n").append(r.correct() ? "✓ " : "✗ ").append(r.label()).append(" : attendu ").append(r.expectedRaw())
                     .append(" — réponse : ").append(r.studentValue() == null ? "(aucune)" : r.studentValue());
                 if (r.source() != null) sb.append(" [").append(r.source()).append("]");
+                if (r.conflict()) sb.append(" ⚠ copie : ").append(r.scannedValue());
+            }
+            if (conflicts() > 0) {
+                sb.append("\n⚠ ").append(conflicts()).append(" ligne(s) où la valeur saisie diffère de la copie : vérifiez la copie.");
             }
             return sb.toString();
         }
@@ -186,8 +197,10 @@ public class CorrectionGridService {
             total += row.points();
             String value = valueFor(typed, row.id());
             String source = value != null ? SOURCE_TYPED : null;
+            String scannedValue = valueFor(scanned, row.id());
+            boolean conflict = value != null && scannedValue != null && !sameValue(row, value, scannedValue);
             if (value == null) {
-                value = valueFor(scanned, row.id());
+                value = scannedValue;
                 if (value != null) source = SOURCE_SCAN;
             }
             boolean correct;
@@ -200,7 +213,7 @@ public class CorrectionGridService {
             }
             if (correct) earned += row.points();
             results.add(new RowResult(row.id(), row.label(), row.question(), row.expectedRaw(), value, source,
-                correct, correct ? row.points() : 0, row.points()));
+                correct, correct ? row.points() : 0, row.points(), scannedValue, conflict));
         }
         return new GridResult(results, Math.round(earned * 100) / 100.0, Math.round(total * 100) / 100.0);
     }
@@ -214,6 +227,15 @@ public class CorrectionGridService {
         String value = blankToNull(values.get(rowId));
         if (value == null && rowId.matches(".+[a-z]'*")) value = blankToNull(values.get(rowId.replaceAll("[a-z]'*$", "")));
         return value;
+    }
+
+    /** Même résultat (à la tolérance de la ligne près), ou même texte quand les valeurs ne sont pas des nombres. */
+    private boolean sameValue(GridRow row, String a, String b) {
+        List<Double> na = comparisonService.numbers(a);
+        List<Double> nb = comparisonService.numbers(b);
+        if (na.isEmpty() || nb.isEmpty()) return normalize(a).replaceAll("\\s+", "").equals(normalize(b).replaceAll("\\s+", ""));
+        double tolerance = Math.max(0.005, Math.abs(row.expected()) * row.tolerance());
+        return na.stream().anyMatch(x -> nb.stream().anyMatch(y -> Math.abs(x - y) <= tolerance));
     }
 
     /**

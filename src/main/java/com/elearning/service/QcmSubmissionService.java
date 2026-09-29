@@ -224,6 +224,20 @@ public class QcmSubmissionService {
         return passageRepo.save(passage);
     }
 
+    /**
+     * Recorrige une copie déjà soumise avec ses réponses enregistrées, par exemple quand la lecture de la
+     * copie papier se termine après la soumission. Une note modifiée par le professeur n'est jamais écrasée.
+     */
+    @Transactional
+    public void regrade(QcmPassage passage) {
+        if (!Boolean.TRUE.equals(passage.getIsSubmitted()) || passage.getManualScore() != null) return;
+        LocalDateTime submittedAt = passage.getSubmittedAt();
+        passage.setIsSubmitted(false);
+        submit(passage, readDraft(passage));
+        passage.setSubmittedAt(submittedAt);
+        passageRepo.save(passage);
+    }
+
     /** Devoir « documentaire » sans question : note recalculée tant que le professeur ne l'a pas modifiée. */
     @Transactional
     public void refreshDocumentScore(QcmPassage passage, Qcm qcm) {

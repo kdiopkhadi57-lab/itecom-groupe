@@ -49,6 +49,7 @@ public class QcmController {
     private final com.elearning.service.QcmSubmissionService submissionService;
     private final com.elearning.service.CorrectionGridService gridService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final com.elearning.service.PaperCopyService paperCopyService;
 
     // ── DTOs ───────────────────────────────────────────────────────────────
 
@@ -75,6 +76,7 @@ public class QcmController {
         String status; String documentAnswer; String correctionText;
         Object correctionDetail; // correction ligne par ligne (JSON)
         String ocrExtractedText;  // texte lu sur la copie scannée
+        List<com.elearning.service.PaperCopyService.Page> paperPages; // toutes les pages de la copie
         List<ReponseDetailDto> reponses;
     }
     @Data static class ReponseDetailDto {
@@ -919,6 +921,7 @@ public class QcmController {
         dto.paperCorrectionUrl = p.getPaperCorrectionUrl();
         dto.paperCorrectionFilename = p.getPaperCorrectionFilename();
         dto.ocrExtractedText = p.getOcrExtractedText();
+        dto.paperPages = paperCopyService.pages(p);
         if (dto.maxScore != null && dto.maxScore > 0 && dto.score != null) {
             dto.percentage = String.format("%.0f%%", (dto.score * 100.0) / dto.maxScore);
         } else {

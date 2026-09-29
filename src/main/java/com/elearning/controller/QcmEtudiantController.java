@@ -14,10 +14,10 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import com.elearning.service.FileStorageService;
-import com.elearning.service.QcmCaseOcrGradingService;
 import com.elearning.service.QcmSubmissionService;
 import com.elearning.service.CorrectionGridService;
+import com.elearning.service.PaperCopyService;
+import java.util.concurrent.CompletableFuture;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -36,10 +36,9 @@ public class QcmEtudiantController {
     private final QcmFullscreenViolationRepository fullscreenViolationRepo;
     private final EmailService emailService;
     private final ObjectMapper objectMapper;
-    private final FileStorageService fileStorageService;
-    private final QcmCaseOcrGradingService caseOcrGradingService;
     private final QcmSubmissionService submissionService;
     private final CorrectionGridService gridService;
+    private final PaperCopyService paperCopyService;
 
     private static final int DEFAULT_ESTIMATED_DURATION_MINUTES = 30;
 
@@ -62,7 +61,7 @@ public class QcmEtudiantController {
     @Data static class GridRowDto   { String id; String label; String question; }
     @Data static class QuestionDto  { Long id; String questionText; Integer points; Integer orderIndex; String questionType; String caseScenario; List<String> valueLabels; List<ChoiceDto> choices; List<GridRowDto> gridRows; }
     @Data static class QcmListDto   { Long id; String title; String description; String professorName; int questionCount; boolean alreadyTaken; String createdAt; Integer score; Integer maxScore; }
-    @Data static class QcmTakeDto   { Long id; String title; String description; String subjectFileUrl; String subjectText; Long passageId; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String paperCorrectionUrl; String paperCorrectionFilename; String startedAt; String draftAnswers; List<QuestionDto> questions; }
+    @Data static class QcmTakeDto   { Long id; String title; String description; String subjectFileUrl; String subjectText; Long passageId; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String paperCorrectionUrl; String paperCorrectionFilename; List<PaperCopyService.Page> paperPages; String startedAt; String draftAnswers; List<QuestionDto> questions; }
 
     @Data static class AccesDto     { Long id; String title; String description; Integer estimatedDurationMinutes; int questionCount; String studentName; String studentLevel;
                                       String lastName; String firstName; String birthDate; String level; }
@@ -200,6 +199,7 @@ public class QcmEtudiantController {
         dto.paperCorrectionRequired = Boolean.TRUE.equals(qcm.getPaperCorrectionRequired());
         dto.paperCorrectionUrl = passage.getPaperCorrectionUrl();
         dto.paperCorrectionFilename = passage.getPaperCorrectionFilename();
+        dto.paperPages = paperCopyService.pages(passage);
         dto.startedAt = passage.getStartedAt() != null ? passage.getStartedAt().toString() : null;
         dto.draftAnswers = passage.getDraftAnswers();
         if (qcm.getQuestions().stream().noneMatch(question -> "CASE".equalsIgnoreCase(question.getQuestionType()))) {
@@ -248,81 +248,58 @@ public class QcmEtudiantController {
         return ResponseEntity.ok(dto);
     }
 
+    /**
+     * Ajout d'une ou plusieurs pages à la copie papier, puis lecture de toute la copie par l'OCR.
+     * Traité hors du thread de la requête (voir {@link PaperCopyService#async}) : la connexion à la base
+     * n'est pas retenue pendant l'appel à l'IA.
+     */
     @PostMapping(value = "/{id}/passage/{passageId}/paper-correction", consumes = "multipart/form-data")
-    @Transactional
-    public ResponseEntity<?> uploadPaperCorrection(
+    public CompletableFuture<ResponseEntity<?>> uploadPaperCorrection(
             @PathVariable Long id,
             @PathVariable Long passageId,
-            @RequestPart("file") MultipartFile file,
+            @RequestPart("file") List<MultipartFile> files,
             Authentication auth) {
-        User student = userRepo.findByEmail(auth.getName()).orElseThrow();
-        Qcm qcm = qcmRepo.findById(id).orElseThrow();
-        QcmPassage passage = passageRepo.findById(passageId).orElseThrow();
-        if (!passage.getQcm().getId().equals(qcm.getId()) || !passage.getStudent().getId().equals(student.getId())) {
-            return ResponseEntity.status(403).body(Map.of("message", "Accès interdit."));
-        }
-        if (file == null || file.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("message", "Sélectionnez une copie à envoyer."));
-        }
-        if (!QcmCaseOcrGradingService.isSupported(file.getContentType(), file.getOriginalFilename())) {
-            return ResponseEntity.badRequest().body(Map.of("message",
-                "Format non pris en charge : envoyez une photo JPG, PNG ou WEBP, ou un PDF."));
-        }
+        String email = auth.getName();
+        List<PaperCopyService.Upload> uploads = new ArrayList<>();
         try {
-            String url = fileStorageService.store(file, "devoirs/copies/" + student.getId());
-            passage.setPaperCorrectionUrl(url);
-            passage.setPaperCorrectionFilename(file.getOriginalFilename());
-            passageRepo.save(passage);
-            QcmCaseOcrGradingService.ScannedFile scanned =
-                new QcmCaseOcrGradingService.ScannedFile(file.getBytes(), file.getContentType(), file.getOriginalFilename());
-            // Lignes de grille à lire sur la copie (clé « idQuestion:idLigne »)
-            List<QcmCaseOcrGradingService.RowToRead> rows = new ArrayList<>();
-            for (QcmQuestion q : qcm.getQuestions()) {
-                if (!isPaperCase(q)) continue;
-                for (CorrectionGridService.GridRow row : gridService.gridFor(q, qcm)) {
-                    rows.add(new QcmCaseOcrGradingService.RowToRead(q.getId() + ":" + row.id(), row.label(),
-                        CorrectionGridService.withoutNumbers(row.question())));
-                }
+            for (MultipartFile file : files) {
+                if (file == null || file.isEmpty()) continue;
+                uploads.add(new PaperCopyService.Upload(file.getBytes(), file.getContentType(), file.getOriginalFilename()));
             }
-            Map<String, Map<String, String>> readValues = new java.util.LinkedHashMap<>();
-            boolean read = true;
-            if (!rows.isEmpty()) {
-                // Copie PDF ou image : résultats extraits en JSON, une valeur par ligne de la grille
-                QcmCaseOcrGradingService.Extraction extraction = caseOcrGradingService.extractAnswers(rows, List.of(scanned));
-                read = extraction.read();
-                passage.setExtractedAnswers(objectMapper.writeValueAsString(extraction.answers()));
-                passage.setOcrExtractedText(extraction.transcription());
-                passage.setOcrScore(null);
-                passageRepo.save(passage);
-                extraction.answers().forEach((key, value) -> {
-                    int sep = key.indexOf(':');
-                    if (sep > 0) readValues.computeIfAbsent(key.substring(0, sep), k -> new java.util.LinkedHashMap<>())
-                        .put(key.substring(sep + 1), value);
-                });
-            } else if (!hasPaperCase(qcm)) {
-                passage.setOcrExtractedText(caseOcrGradingService.transcribe(List.of(scanned)));
-                read = !passage.getOcrExtractedText().isBlank();
-                passageRepo.save(passage);
-            } else {
-                QcmCaseOcrGradingService.GradeResult grade = caseOcrGradingService.grade(qcm, List.of(scanned));
-                passage.setOcrExtractedText(grade.extractedText());
-                passage.setOcrScore(grade.score());
-                passage.setOcrCorrectionNote(grade.comment());
-                passage.setScore(grade.score());
-                passage.setMaxScore(grade.maxScore());
-                passageRepo.save(passage);
-            }
-            // Valeurs lues renvoyées à l'étudiant pour qu'il les vérifie (et corrige une erreur de lecture)
-            Map<String, Object> body = new java.util.LinkedHashMap<>();
-            body.put("url", url);
-            body.put("filename", file.getOriginalFilename());
-            body.put("readValues", readValues);
-            if (!read) body.put("ocrWarning", "Votre copie est bien jointe, mais elle n'a pas pu être lue automatiquement : "
-                + "saisissez vos résultats dans le tableau, ou envoyez une photo plus nette.");
-            return ResponseEntity.ok(body);
         } catch (java.io.IOException ex) {
-            return ResponseEntity.internalServerError().body(Map.of("message", "Impossible d'enregistrer la copie."));
+            return CompletableFuture.completedFuture(
+                ResponseEntity.internalServerError().body(Map.of("message", "Impossible d'enregistrer la copie.")));
         }
+        return paperCopyService.async(() -> paperCopyService.addPages(id, passageId, email, uploads))
+            .thenApply(this::paperCopyResponse);
+    }
+
+    /** Retrait d'une page de la copie papier, puis relecture des pages restantes. */
+    @DeleteMapping("/{id}/passage/{passageId}/paper-correction/{index}")
+    public CompletableFuture<ResponseEntity<?>> removePaperCorrectionPage(
+            @PathVariable Long id,
+            @PathVariable Long passageId,
+            @PathVariable int index,
+            Authentication auth) {
+        String email = auth.getName();
+        return paperCopyService.async(() -> paperCopyService.removePage(id, passageId, email, index))
+            .thenApply(this::paperCopyResponse);
+    }
+
+    private ResponseEntity<?> paperCopyResponse(PaperCopyService.Result result) {
+        if (result.error() != null) {
+            return ResponseEntity.status(result.error().status()).body(Map.of("message", result.error().getMessage()));
+        }
+        PaperCopyService.Outcome outcome = result.outcome();
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        PaperCopyService.Page first = outcome.pages().isEmpty() ? null : outcome.pages().get(0);
+        body.put("url", first == null ? null : first.url());
+        body.put("filename", first == null ? null : first.filename());
+        body.put("pages", outcome.pages());
+        // Valeurs lues renvoyées à l'étudiant pour qu'il les vérifie (et corrige une erreur de lecture)
+        body.put("readValues", outcome.readValues());
+        if (outcome.warning() != null) body.put("ocrWarning", outcome.warning());
+        return ResponseEntity.ok(body);
     }
 
     // ── Soumettre les réponses ─────────────────────────────────────────────
@@ -395,12 +372,6 @@ public class QcmEtudiantController {
     private boolean isPaperCase(QcmQuestion question) {
         return submissionService.isPaperCase(question);
     }
-
-
-    private boolean hasPaperCase(Qcm qcm) {
-        return submissionService.hasPaperCase(qcm);
-    }
-
 
     private List<String> practicalLabels(String correctionData) {
         if (correctionData == null || correctionData.isBlank()) return List.of();

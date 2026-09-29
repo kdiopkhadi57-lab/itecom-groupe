@@ -30,28 +30,39 @@ public class QcmCaseOcrGradingService {
     public record ScannedFile(byte[] data, String contentType, String filename) {}
     public record GradeResult(int score, int maxScore, String comment, String extractedText) {}
 
-    public GradeResult grade(Qcm qcm, List<ScannedFile> studentFiles) {
+    /** Consigne de correction préparée à partir du devoir (sans accès à la base pendant l'appel à l'IA). */
+    public record GradingPrompt(Long qcmId, String prompt, int maxScore) {}
+
+    public GradingPrompt prepareGrading(Qcm qcm) {
         List<QcmQuestion> caseQuestions = qcm.getQuestions().stream()
             .filter(this::isPaperCase)
             .toList();
         int maxScore = caseQuestions.stream().mapToInt(QcmQuestion::getPoints).sum();
-        if (caseQuestions.isEmpty()) return new GradeResult(0, 0, "Aucune question papier à corriger.", "");
+        return new GradingPrompt(qcm.getId(), caseQuestions.isEmpty() ? null : buildPrompt(qcm, caseQuestions), maxScore);
+    }
+
+    public GradeResult grade(Qcm qcm, List<ScannedFile> studentFiles) {
+        return grade(prepareGrading(qcm), studentFiles);
+    }
+
+    public GradeResult grade(GradingPrompt grading, List<ScannedFile> studentFiles) {
+        int maxScore = grading.maxScore();
+        if (grading.prompt() == null) return new GradeResult(0, 0, "Aucune question papier à corriger.", "");
         if (client == null) return new GradeResult(0, maxScore, "Correction OCR/IA indisponible : correction manuelle requise.", "");
 
-        List<ContentBlockParam> content = new ArrayList<>();
-        content.add(ContentBlockParam.ofText(TextBlockParam.builder().text(buildPrompt(qcm, caseQuestions)).build()));
-        for (ScannedFile file : studentFiles) content.add(toContentBlock(file));
-
         try {
+            List<ContentBlockParam> content = new ArrayList<>();
+            content.add(ContentBlockParam.ofText(TextBlockParam.builder().text(grading.prompt()).build()));
+            content.addAll(toContentBlocks(studentFiles));
             MessageCreateParams params = MessageCreateParams.builder()
-                .model(Model.of(model)).maxTokens(10000L)
+                .model(Model.of(model)).maxTokens(12000L)
                 .addUserMessageOfBlockParams(content).build();
             Message response = client.messages().create(params);
             String raw = response.content().stream().flatMap(block -> block.text().stream())
                 .map(TextBlock::text).findFirst().orElse("{}");
             return parse(raw, maxScore);
         } catch (Exception e) {
-            log.error("Erreur correction OCR du devoir {}: {}", qcm.getId(), e.getMessage());
+            log.error("Erreur correction OCR du devoir {}: {}", grading.qcmId(), e.getMessage());
             return new GradeResult(0, maxScore, "La correction automatique a échoué : correction manuelle requise.", "");
         }
     }
@@ -69,7 +80,8 @@ public class QcmCaseOcrGradingService {
     public Extraction extractAnswers(List<RowToRead> rows, List<ScannedFile> studentFiles) {
         if (client == null || studentFiles.isEmpty()) return new Extraction(Map.of(), "", false);
         StringBuilder prompt = new StringBuilder("""
-            Tu lis la copie d'un étudiant (PDF ou photo, manuscrite ou imprimée). Lis tout : texte, calculs, tableaux
+            Tu lis la copie d'un étudiant (PDF ou photos, manuscrite ou imprimée ; une copie peut compter plusieurs
+            pages, jointes dans l'ordre : lis-les toutes). Lis tout : texte, calculs, tableaux
             (chaque ligne et chaque colonne), annotations. Pour chaque ligne demandée ci-dessous, recopie le RÉSULTAT FINAL
             que l'étudiant a donné pour cette ligne, exactement comme il l'a écrit (chiffres, séparateurs, unité).
             Si l'étudiant n'a pas répondu à une ligne, ou si c'est illisible, mets null. N'invente jamais une valeur,
@@ -86,12 +98,12 @@ public class QcmCaseOcrGradingService {
             Réponds uniquement avec ce JSON :
             {"answers": {"<clé>": "<valeur écrite par l'étudiant ou null>", ...}, "transcription": "<transcription fidèle de la copie, tableaux ligne par ligne avec des | >"}
             """);
-        List<ContentBlockParam> content = new ArrayList<>();
-        content.add(ContentBlockParam.ofText(TextBlockParam.builder().text(prompt.toString()).build()));
-        for (ScannedFile file : studentFiles) content.add(toContentBlock(file));
         try {
+            List<ContentBlockParam> content = new ArrayList<>();
+            content.add(ContentBlockParam.ofText(TextBlockParam.builder().text(prompt.toString()).build()));
+            content.addAll(toContentBlocks(studentFiles));
             MessageCreateParams params = MessageCreateParams.builder()
-                .model(Model.of(model)).maxTokens(12000L)
+                .model(Model.of(model)).maxTokens(16000L)
                 .addUserMessageOfBlockParams(content).build();
             Message response = client.messages().create(params);
             if (response.stopReason().map(StopReason.MAX_TOKENS::equals).orElse(false)) {
@@ -116,16 +128,16 @@ public class QcmCaseOcrGradingService {
     /** Transcription seule d'une copie scannée (devoir sans question « cas pratique »). */
     public String transcribe(List<ScannedFile> studentFiles) {
         if (client == null || studentFiles.isEmpty()) return "";
-        List<ContentBlockParam> content = new ArrayList<>();
-        content.add(ContentBlockParam.ofText(TextBlockParam.builder().text("""
-            Transcris fidèlement la copie d'étudiant jointe (texte, calculs, tableaux ligne par ligne avec les colonnes séparées par « | »).
-            Recopie tous les chiffres exactement comme ils sont écrits. N'invente rien : écris [illisible] si nécessaire.
-            Retourne uniquement la transcription.
-            """).build()));
-        for (ScannedFile file : studentFiles) content.add(toContentBlock(file));
         try {
+            List<ContentBlockParam> content = new ArrayList<>();
+            content.add(ContentBlockParam.ofText(TextBlockParam.builder().text("""
+                Transcris fidèlement la copie d'étudiant jointe, toutes les pages dans l'ordre (texte, calculs, tableaux ligne par ligne
+                avec les colonnes séparées par « | »). Recopie tous les chiffres exactement comme ils sont écrits.
+                N'invente rien : écris [illisible] si nécessaire. Retourne uniquement la transcription.
+                """).build()));
+            content.addAll(toContentBlocks(studentFiles));
             MessageCreateParams params = MessageCreateParams.builder()
-                .model(Model.of(model)).maxTokens(10000L)
+                .model(Model.of(model)).maxTokens(12000L)
                 .addUserMessageOfBlockParams(content).build();
             Message response = client.messages().create(params);
             return response.content().stream().flatMap(block -> block.text().stream())
@@ -184,6 +196,23 @@ public class QcmCaseOcrGradingService {
         return type.contains("pdf") || name.endsWith(".pdf") || resolveImageType(type, name) != null;
     }
 
+    /** Taille totale maximale des fichiers envoyés en une requête (limite de l'API : 32 Mo). */
+    private static final long MAX_REQUEST_BASE64 = 28L * 1024 * 1024;
+
+    private List<ContentBlockParam> toContentBlocks(List<ScannedFile> files) {
+        List<ContentBlockParam> blocks = new ArrayList<>();
+        long total = 0;
+        for (ScannedFile file : files) {
+            ContentBlockParam block = toContentBlock(file);
+            total += block.image().flatMap(i -> i.source().base64()).map(b -> (long) b.data().length())
+                .or(() -> block.document().flatMap(d -> d.source().base64()).map(b -> (long) b.data().length()))
+                .orElse(0L);
+            if (total > MAX_REQUEST_BASE64) throw new IllegalArgumentException("copie trop volumineuse pour être lue en une fois");
+            blocks.add(block);
+        }
+        return blocks;
+    }
+
     private ContentBlockParam toContentBlock(ScannedFile file) {
         String type = file.contentType() == null ? "" : file.contentType().toLowerCase();
         String name = file.filename() == null ? "" : file.filename().toLowerCase();
@@ -212,10 +241,10 @@ public class QcmCaseOcrGradingService {
         return null;
     }
 
-    /** Taille maximale d'une image acceptée par l'API (5 Mo en base64), avec une marge. */
-    private static final int MAX_IMAGE_BYTES = 3_500_000;
+    /** Poids maximal d'une page image (l'API accepte 5 Mo par image et 32 Mo par requête : une copie compte plusieurs pages). */
+    private static final int MAX_IMAGE_BYTES = 1_500_000;
     /** Au-delà, l'API réduit elle-même l'image : inutile d'envoyer plus de pixels. */
-    private static final int MAX_IMAGE_SIDE = 2400;
+    private static final int MAX_IMAGE_SIDE = 2000;
 
     /**
      * Photo de téléphone trop lourde ou trop grande : réduite et réencodée en JPEG, sinon l'API la
@@ -248,7 +277,7 @@ public class QcmCaseOcrGradingService {
 
     private String buildPrompt(Qcm qcm, List<QcmQuestion> questions) {
         StringBuilder prompt = new StringBuilder("""
-            Tu es un correcteur expert pour une école supérieure. Les fichiers joints sont les pages manuscrites ou imprimées de la réponse d'un étudiant.
+            Tu es un correcteur expert pour une école supérieure. Les fichiers joints sont les pages manuscrites ou imprimées de la réponse d'un étudiant, dans l'ordre.
             Utilise une lecture OCR/vision complète : lis le texte hors tableau, les tableaux, cellules, colonnes, lignes, unités, signes mathématiques, ratures et annotations.
             Les domaines peuvent être mathématiques, français, droit, comptabilité, gestion ou toute autre matière. Adapte les critères au domaine.
             Reconstitue les réponses même si elles sont réparties entre texte libre et tableaux. N'invente jamais un contenu illisible.

@@ -58,8 +58,13 @@ public class QcmPassage {
     @Column(columnDefinition = "TEXT")
     private String documentAnswer;
 
+    // Première page de la copie papier (compatibilité) ; toutes les pages sont dans paperCopyPages
     private String paperCorrectionUrl;
     private String paperCorrectionFilename;
+
+    // Pages de la copie papier, dans l'ordre (JSON [{url, filename, contentType}])
+    @Column(columnDefinition = "TEXT")
+    private String paperCopyPages;
 
     private Integer manualScore;
 

@@ -41,6 +41,15 @@ public class FileStorageService {
         return "/uploads/" + subDirectory + "/" + filename;
     }
 
+    /** Reads back a file stored by this service, from its public URL (/uploads/...). */
+    public byte[] read(String url) throws IOException {
+        if (url == null || !url.startsWith("/uploads/")) throw new IOException("URL de fichier invalide : " + url);
+        Path root = Paths.get(uploadDir).toAbsolutePath().normalize();
+        Path path = root.resolve(url.substring("/uploads/".length())).normalize();
+        if (!path.startsWith(root)) throw new IOException("URL de fichier invalide : " + url);
+        return Files.readAllBytes(path);
+    }
+
     /** Stores raw bytes (e.g. a generated PDF) under uploadDir/subDirectory and returns the public URL. */
     public String storeBytes(byte[] data, String subDirectory, String extension) throws IOException {
         Path targetDir = Paths.get(uploadDir, subDirectory).toAbsolutePath().normalize();

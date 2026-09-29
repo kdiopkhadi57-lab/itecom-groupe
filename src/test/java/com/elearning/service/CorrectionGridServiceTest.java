@@ -77,6 +77,29 @@ class CorrectionGridServiceTest {
     }
 
     @Test
+    void typedValueDifferentFromTheCopyIsFlaggedForTheTeacher() {
+        var grid = service.buildGrid(CORRECTION, SUBJECT, 9);
+        var result = service.compare(grid,
+            Map.of("Q1", "5 280 000", "Q2", "4 680 000"),       // saisi
+            Map.of("Q1", "5 820 000", "Q2", "4.680.000"),       // lu sur la copie
+            null);
+        // Q1 : la saisie est notée, mais la copie indique autre chose
+        assertTrue(result.rows().get(0).correct());
+        assertTrue(result.rows().get(0).conflict());
+        assertEquals("5 820 000", result.rows().get(0).scannedValue());
+        // Q2 : même valeur, écrite autrement : pas de désaccord
+        assertFalse(result.rows().get(1).conflict());
+        assertEquals(1, result.conflicts());
+        assertTrue(result.report().contains("copie : 5 820 000"));
+    }
+
+    @Test
+    void rowHintSentToTheOcrHasNoNumbers() {
+        assertEquals("Coût de revient = … + … = … FCFA",
+            CorrectionGridService.withoutNumbers("Coût de revient = 5 280 000 + 12,5 = 5 280 012,5 FCFA"));
+    }
+
+    @Test
     void wrongScannedValueIsNotRescuedByFreeText() {
         var grid = service.buildGrid(CORRECTION, SUBJECT, 9);
         // La copie donne 4 800 000 pour Q3 : faux, même si 4 700 000 apparaît dans un calcul intermédiaire
