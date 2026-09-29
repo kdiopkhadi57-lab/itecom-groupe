@@ -3,3 +3,7 @@ target/
 
 # Système
 .DS_Store
+
+# Fichiers envoyés dans l'application (copies d'étudiants, sujets, corrections,
+# enregistrements, livres) : données des utilisateurs, jamais versionnées
+uploads/
