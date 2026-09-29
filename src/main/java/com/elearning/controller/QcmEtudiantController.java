@@ -180,7 +180,11 @@ public class QcmEtudiantController {
 
         passage.setDeclaredLastName(input.lastName.trim());
         passage.setDeclaredFirstName(input.firstName.trim());
-        passage.setBirthDate(java.time.LocalDate.parse(input.birthDate.trim()));
+        try {
+            passage.setBirthDate(java.time.LocalDate.parse(input.birthDate.trim()));
+        } catch (java.time.format.DateTimeParseException e) {
+            passage.setBirthDate(null);
+        }
         passage.setDeclaredLevel(input.level.trim());
         passageRepo.save(passage);
 
@@ -333,15 +337,7 @@ public class QcmEtudiantController {
                 || firstNonBlank(input.birthDate) == null || firstNonBlank(input.level) == null) {
             return "Renseignez votre nom, prénom, date de naissance et niveau avant de commencer.";
         }
-        try {
-            java.time.LocalDate birth = java.time.LocalDate.parse(input.birthDate.trim());
-            java.time.LocalDate today = java.time.LocalDate.now();
-            if (birth.isAfter(today.minusYears(10)) || birth.isBefore(today.minusYears(100))) {
-                return "Date de naissance invalide.";
-            }
-        } catch (java.time.format.DateTimeParseException e) {
-            return "Date de naissance invalide.";
-        }
+        // Contrôle de la date de naissance (âge, format) désactivé pour le moment : toute date est acceptée
         return null;
     }
 
