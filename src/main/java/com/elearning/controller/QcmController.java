@@ -47,7 +47,6 @@ public class QcmController {
     private final FileStorageService fileStorageService;
     private final PasswordEncoder passwordEncoder;
     private final com.elearning.service.QcmSubmissionService submissionService;
-    private final com.elearning.service.CorrectionGridService gridService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final com.elearning.service.PaperCopyService paperCopyService;
 
@@ -472,69 +471,10 @@ public class QcmController {
             if (q.getQuestionText() == null || !q.getQuestionText().trim().startsWith(head)) continue;
             q.setQuestionText(qcm.getSubjectText());
             q.setCaseScenario(null);
-            q.setCorrectionGrid(null); // recalculée à partir de la nouvelle correction
             String correction = qcm.getCorrectionText() == null ? "" : qcm.getCorrectionText().trim();
             q.setCorrectionData(correction);
             q.setExpectedAnswer(correction.isBlank() ? "Référence de correction fournie par le professeur." : correction);
         }
-    }
-
-    // ── Grille de correction ligne par ligne (vérifiable et modifiable) ──
-
-    @GetMapping("/{id}/grilles")
-    @Transactional(readOnly = true)
-    public ResponseEntity<List<Map<String, Object>>> grilles(@PathVariable Long id) {
-        Qcm qcm = qcmRepo.findById(id).orElseThrow();
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (QcmQuestion q : qcm.getQuestions()) {
-            if (!submissionService.isPaperCase(q)) continue;
-            String text = q.getQuestionText() == null ? "" : q.getQuestionText().trim();
-            result.add(Map.of(
-                "questionId", q.getId(),
-                "questionText", text.length() > 160 ? text.substring(0, 160) + "…" : text,
-                "points", q.getPoints(),
-                "validated", q.getCorrectionGrid() != null && !q.getCorrectionGrid().isBlank(),
-                "rows", gridService.gridFor(q, qcm)));
-        }
-        return ResponseEntity.ok(result);
-    }
-
-    @PutMapping("/{id}/grilles/{questionId}")
-    @Transactional
-    public ResponseEntity<?> saveGrille(@PathVariable Long id, @PathVariable Long questionId,
-                                        @RequestBody List<com.elearning.service.CorrectionGridService.GridRow> rows) {
-        Qcm qcm = qcmRepo.findById(id).orElseThrow();
-        QcmQuestion question = qcm.getQuestions().stream().filter(q -> q.getId().equals(questionId)).findFirst().orElse(null);
-        if (question == null) return ResponseEntity.notFound().build();
-        Set<String> ids = new HashSet<>();
-        for (var row : rows) {
-            if (row.id() == null || row.id().isBlank() || !ids.add(row.id().trim())) {
-                return ResponseEntity.badRequest().body(Map.of("message", "Chaque ligne doit avoir un identifiant unique (ex. Q1, Q2…)."));
-            }
-            if (row.points() < 0 || row.tolerance() < 0 || row.tolerance() > 1) {
-                return ResponseEntity.badRequest().body(Map.of("message", "Points et tolérance invalides pour la ligne " + row.id() + "."));
-            }
-        }
-        List<com.elearning.service.CorrectionGridService.GridRow> cleaned = rows.stream()
-            .map(r -> new com.elearning.service.CorrectionGridService.GridRow(r.id().trim(),
-                r.label() == null || r.label().isBlank() ? r.id().trim() : r.label().trim(),
-                r.question(), r.expected(), r.expectedRaw() == null || r.expectedRaw().isBlank()
-                    ? String.valueOf(r.expected()) : r.expectedRaw().trim(), r.tolerance(), r.points()))
-            .toList();
-        question.setCorrectionGrid(gridService.toJson(cleaned));
-        qcmRepo.save(qcm);
-        return ResponseEntity.ok(Map.of("message", "Grille enregistrée.", "rows", cleaned));
-    }
-
-    /** Revenir à la grille calculée automatiquement à partir de la correction. */
-    @DeleteMapping("/{id}/grilles/{questionId}")
-    @Transactional
-    public ResponseEntity<?> resetGrille(@PathVariable Long id, @PathVariable Long questionId) {
-        Qcm qcm = qcmRepo.findById(id).orElseThrow();
-        qcm.getQuestions().stream().filter(q -> q.getId().equals(questionId)).findFirst()
-            .ifPresent(q -> q.setCorrectionGrid(null));
-        qcmRepo.save(qcm);
-        return ResponseEntity.noContent().build();
     }
 
     // ── Ajouter des étudiants à un QCM existant ───────────────────────────

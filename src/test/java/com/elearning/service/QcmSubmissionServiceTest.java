@@ -18,15 +18,14 @@ import static org.mockito.Mockito.*;
 class QcmSubmissionServiceTest {
 
     private final QcmPassageRepository passageRepo = mock(QcmPassageRepository.class);
+    private final org.springframework.context.ApplicationEventPublisher events = mock(org.springframework.context.ApplicationEventPublisher.class);
     private QcmSubmissionService service;
     private Qcm qcm;
     private QcmChoice goodChoice;
 
     @BeforeEach
     void setUp() {
-        service = new QcmSubmissionService(passageRepo, new ObjectMapper(),
-            mock(QcmCaseOcrGradingService.class), new CorrectionComparisonService(),
-            new CorrectionGridService(new CorrectionComparisonService(), new ObjectMapper()));
+        service = new QcmSubmissionService(passageRepo, new ObjectMapper(), new CorrectionComparisonService(), events);
         when(passageRepo.save(any(QcmPassage.class))).thenAnswer(inv -> inv.getArgument(0));
 
         qcm = Qcm.builder().id(1L).title("Devoir").estimatedDurationMinutes(30).build();
@@ -95,5 +94,49 @@ class QcmSubmissionServiceTest {
         QcmPassage p = passage(LocalDateTime.now().minusMinutes(10));
         assertFalse(service.autoSubmitIfExpired(p));
         assertNotEquals(Boolean.TRUE, p.getIsSubmitted());
+    }
+
+    @Test
+    void aiGradeIsUsedForTheCaseAndCombinesTypedAnswerAndCopy() {
+        QcmPassage p = passage(LocalDateTime.now());
+        p.setPaperCorrectionUrl("/uploads/devoirs/copies/1/p1.jpg");
+        p.setOcrExtractedText("Coût = 5 280 000 FCFA");
+        var request = service.caseRequest(p, answers("Voir ma copie", false));
+        assertEquals(1, request.questions().size());
+        assertEquals("Voir ma copie", request.questions().get(0).typedAnswer());
+        assertEquals("Coût = 5 280 000 FCFA", request.copyTranscription());
+        assertEquals("Coût = 5 280 000 FCFA", request.questions().get(0).correction());
+
+        var grade = new QcmCaseOcrGradingService.CaseGrade(
+            Map.of(20L, new QcmCaseOcrGradingService.QuestionGrade(2.5, "Résultat juste, méthode incomplète")), "Bonne copie");
+        service.submit(p, answers("Voir ma copie", false), grade);
+        assertEquals(2 + 3, p.getScore());          // 2,5 arrondi à 3
+        assertEquals(3, p.getOcrScore());
+        assertTrue(p.getOcrCorrectionNote().contains("Résultat juste, méthode incomplète"));
+        assertTrue(p.getOcrCorrectionNote().contains("Chiffres du corrigé retrouvés : 1/1"));
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    void withoutAiGradeTheCaseGetsAProvisionalScoreAndIsQueuedForGrading() {
+        QcmPassage p = passage(LocalDateTime.now());
+        service.submit(p, answers("5 280 000", false));
+        assertEquals(5, p.getScore());
+        assertNull(p.getOcrScore());
+        assertTrue(p.getOcrCorrectionNote().contains("note provisoire"));
+        verify(events).publishEvent(any(QcmSubmissionService.CaseGradingRequested.class));
+    }
+
+    @Test
+    void typedAnswerIncludesTheSubjectTableCells() {
+        var answer = new QcmSubmissionService.Answer(20L, null, Map.of("answer", "Calculs ci-dessous", "Q2", "4 680 000", "Q1", "5 280 000"));
+        assertEquals("Calculs ci-dessous\nQ1 : 5 280 000\nQ2 : 4 680 000", QcmSubmissionService.typedAnswerOf(answer));
+    }
+
+    @Test
+    void paperCopyAloneIsEnoughToSubmit() {
+        QcmPassage p = passage(LocalDateTime.now());
+        p.setPaperCorrectionUrl("/uploads/devoirs/copies/1/p1.jpg");
+        assertNull(service.refusal(p, answers(null, false)));
     }
 }

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -23,6 +25,11 @@ import java.util.stream.Collectors;
  * Les réponses sont enregistrées au fil de l'eau (brouillon) : si la soumission du navigateur
  * n'aboutit pas (fin du temps, exclusion, coupure réseau), le serveur soumet lui-même la copie
  * avec le dernier brouillon une fois le temps du devoir écoulé. Aucune copie n'est perdue.
+ *
+ * Le cas pratique est répondu dans la zone de saisie, sur une copie papier, ou les deux. Il est noté
+ * par l'IA (corrigé du professeur comparé à l'ensemble de la réponse) ; la correction est préparée
+ * hors transaction par {@link CaseGradingService} et transmise ici. Sans elle, la note provisoire est
+ * la part des chiffres du corrigé retrouvés dans la réponse, et la correction par l'IA est relancée.
  */
 @Service
 @RequiredArgsConstructor
@@ -40,15 +47,19 @@ public class QcmSubmissionService {
         public SubmissionRefusedException(String message) { super(message); }
     }
 
+    /** Copie soumise sans correction par l'IA : à corriger en arrière-plan une fois la transaction validée. */
+    public record CaseGradingRequested(Long passageId) {}
+
     public static final int DEFAULT_DURATION_MINUTES = 30;
     /** Délai laissé au navigateur pour soumettre lui-même avant la soumission automatique par le serveur. */
     private static final int AUTO_SUBMIT_GRACE_MINUTES = 3;
 
+    private static final String PLACEHOLDER_ANSWER = "Référence de correction fournie par le professeur.";
+
     private final QcmPassageRepository passageRepo;
     private final ObjectMapper objectMapper;
-    private final QcmCaseOcrGradingService caseOcrGradingService;
     private final CorrectionComparisonService comparisonService;
-    private final CorrectionGridService gridService;
+    private final ApplicationEventPublisher events;
 
     // ── Brouillon ──────────────────────────────────────────────────────────
 
@@ -64,7 +75,7 @@ public class QcmSubmissionService {
         }
     }
 
-    private Submission readDraft(QcmPassage passage) {
+    public Submission readDraft(QcmPassage passage) {
         if (passage.getDraftAnswers() == null || passage.getDraftAnswers().isBlank()) return Submission.empty();
         try {
             Submission draft = objectMapper.readValue(passage.getDraftAnswers(), Submission.class);
@@ -90,13 +101,17 @@ public class QcmSubmissionService {
         }
     }
 
-    /** Soumet la copie avec le dernier brouillon si le temps du devoir est écoulé. */
+    /**
+     * Soumet la copie avec le dernier brouillon si le temps du devoir est écoulé. Aucun appel à l'IA ici :
+     * le cas pratique reçoit une note provisoire (chiffres retrouvés), puis la correction par l'IA se fait
+     * en arrière-plan une fois la transaction validée.
+     */
     @Transactional
     public boolean autoSubmitIfExpired(QcmPassage passage) {
         if (Boolean.TRUE.equals(passage.getIsSubmitted()) || passage.getStartedAt() == null) return false;
         if (deadline(passage).isAfter(LocalDateTime.now())) return false;
         try {
-            submit(passage, readDraft(passage));
+            submit(passage, readDraft(passage), null);
             log.info("Devoir #{} : copie du passage {} soumise automatiquement (temps écoulé)",
                 passage.getQcm().getId(), passage.getId());
             return true;
@@ -108,54 +123,73 @@ public class QcmSubmissionService {
 
     // ── Soumission et correction ───────────────────────────────────────────
 
+    /** Motif de refus de la soumission, ou null si elle est acceptée. */
+    public String refusal(QcmPassage passage, Submission input) {
+        if (Boolean.TRUE.equals(passage.getIsSubmitted())) return "Ce devoir a déjà été soumis.";
+        // Une soumission forcée (fin du temps, exclusion) est toujours acceptée : la copie est corrigée en l'état
+        if (Boolean.TRUE.equals(input.forced())) return null;
+        Qcm qcm = passage.getQcm();
+        Map<Long, Answer> responseMap = responseMap(input);
+        boolean hasPaperCopy = passage.getPaperCorrectionUrl() != null && !passage.getPaperCorrectionUrl().isBlank();
+        if (Boolean.TRUE.equals(qcm.getPaperCorrectionRequired()) && !hasPaperCopy) {
+            return "Joignez la photo ou le scan de votre copie papier avant de soumettre.";
+        }
+        // Cas pratique : réponse dans la zone de saisie, copie papier, ou les deux
+        boolean caseUnanswered = qcm.getQuestions().stream().filter(this::isPaperCase)
+            .anyMatch(q -> !hasCaseAnswer(responseMap.get(q.getId())));
+        if (caseUnanswered && !hasPaperCopy) {
+            return "Rédigez votre réponse au cas pratique dans la zone de saisie, ou joignez votre copie papier, avant de soumettre.";
+        }
+        return null;
+    }
+
+    /**
+     * Questions « cas pratique » à faire corriger par l'IA, avec la réponse saisie et le texte lu sur la
+     * copie ; null s'il n'y a pas de cas pratique. À appeler en transaction, avant l'appel à l'IA.
+     */
+    public QcmCaseOcrGradingService.CaseRequest caseRequest(QcmPassage passage, Submission input) {
+        Qcm qcm = passage.getQcm();
+        Map<Long, Answer> responseMap = responseMap(input);
+        List<QcmCaseOcrGradingService.CaseQuestion> questions = qcm.getQuestions().stream()
+            .filter(this::isPaperCase)
+            .map(q -> new QcmCaseOcrGradingService.CaseQuestion(q.getId(), q.getPoints(), q.getQuestionText(),
+                q.getCaseScenario(), correctionTextFor(q, qcm), typedAnswerOf(responseMap.get(q.getId()))))
+            .toList();
+        return questions.isEmpty() ? null
+            : new QcmCaseOcrGradingService.CaseRequest(qcm.getTitle(), questions, passage.getOcrExtractedText());
+    }
+
+    /** Soumission sans correction par l'IA (tests, soumission automatique) : note provisoire du cas pratique. */
     @Transactional
     public QcmPassage submit(QcmPassage passage, Submission input) {
-        Qcm qcm = passage.getQcm();
-        if (Boolean.TRUE.equals(passage.getIsSubmitted())) {
-            throw new SubmissionRefusedException("Ce devoir a déjà été soumis.");
-        }
-        Map<Long, Answer> responseMap = input.reponses() == null ? Map.of() :
-            input.reponses().stream()
-                .filter(r -> r != null && r.questionId() != null)
-                .collect(Collectors.toMap(Answer::questionId, r -> r, (a, b) -> b));
+        return submit(passage, input, null);
+    }
 
-        boolean hasPaperCopy = passage.getPaperCorrectionUrl() != null && !passage.getPaperCorrectionUrl().isBlank();
-        // Le cas pratique peut être rédigé directement dans la zone de saisie : la copie papier
-        // n'est alors plus obligatoire, sauf si le professeur l'a exigée explicitement.
-        boolean allCasesTyped = hasPaperCase(qcm) && qcm.getQuestions().stream().filter(this::isPaperCase)
-            .allMatch(q -> hasCaseAnswer(responseMap.get(q.getId())));
-        boolean paperMandatory = Boolean.TRUE.equals(qcm.getPaperCorrectionRequired()) || (hasPaperCase(qcm) && !allCasesTyped);
-        // Une soumission forcée (fin du temps, exclusion) est toujours acceptée : la copie est corrigée en l'état
-        if (paperMandatory && !hasPaperCopy && !Boolean.TRUE.equals(input.forced())) {
-            throw new SubmissionRefusedException(Boolean.TRUE.equals(qcm.getPaperCorrectionRequired())
-                ? "Joignez la photo ou le scan de votre copie papier avant de soumettre."
-                : "Rédigez votre réponse au cas pratique dans la zone de saisie, ou joignez votre copie papier, avant de soumettre.");
-        }
+    /**
+     * Enregistre la copie et calcule la note. {@code caseGrade} est la correction du cas pratique par
+     * l'IA, préparée hors transaction ; null si elle n'a pas pu être faite.
+     */
+    @Transactional
+    public QcmPassage submit(QcmPassage passage, Submission input, QcmCaseOcrGradingService.CaseGrade caseGrade) {
+        Qcm qcm = passage.getQcm();
+        String refused = refusal(passage, input);
+        if (refused != null) throw new SubmissionRefusedException(refused);
+        Map<Long, Answer> responseMap = responseMap(input);
 
         passage.setDocumentAnswer(input.documentAnswer());
-
-        // Pas de copie scannée ni de chiffres dans la correction : avis de l'IA sur la réponse saisie
-        if (!hasPaperCopy && allCasesTyped && passage.getOcrScore() == null
-                && qcm.getQuestions().stream().filter(this::isPaperCase).allMatch(q -> gridService.gridFor(q, qcm).isEmpty())) {
-            Map<Long, String> typed = qcm.getQuestions().stream().filter(this::isPaperCase)
-                .collect(Collectors.toMap(QcmQuestion::getId, q -> java.util.Objects.toString(textAnswerOf(responseMap.get(q.getId())), "")));
-            QcmCaseOcrGradingService.GradeResult grade = caseOcrGradingService.gradeTypedAnswers(qcm, typed);
-            passage.setOcrScore(grade.score());
-            passage.setOcrCorrectionNote(grade.comment());
-        }
-
         int score = 0, maxScore = 0;
         passage.getReponses().clear();
 
-        List<String> comparisonReports = new ArrayList<>();
+        List<String> notes = new ArrayList<>();
         List<Map<String, Object>> correctionDetail = new ArrayList<>();
-        Map<String, String> extracted = readMap(passage.getExtractedAnswers());
+        boolean caseGradePending = false;
+        Integer caseScore = null;
         if (qcm.getQuestions().isEmpty()) {
             var expected = comparisonService.expectedValues(qcm.getCorrectionText(), qcm.getSubjectText());
             var result = comparisonService.compare(expected, joinTexts(input.documentAnswer(), passage.getOcrExtractedText()));
             score = result.matched();
             maxScore = result.total();
-            if (!expected.isEmpty()) comparisonReports.add(result.report());
+            if (!expected.isEmpty()) notes.add(result.report());
         }
 
         for (QcmQuestion question : qcm.getQuestions()) {
@@ -167,51 +201,61 @@ public class QcmSubmissionService {
                 .filter(c -> c.getId().equals(chosenId)).findFirst().orElse(null);
 
             boolean paperCase = isPaperCase(question);
-            double practicalRatio = "PRACTICAL".equals(question.getQuestionType()) && !paperCase
-                ? gradePractical(question, response != null ? response.values() : Map.of()) : 0;
-            boolean correct = paperCase
-                ? passage.getOcrScore() != null && passage.getOcrScore() >= question.getPoints()
-                : "PRACTICAL".equals(question.getQuestionType())
-                ? practicalRatio >= 0.999
-                : chosen != null && Boolean.TRUE.equals(chosen.getIsCorrect());
-            var grid = paperCase ? gridService.gridFor(question, qcm) : List.<CorrectionGridService.GridRow>of();
-            if (paperCase && !grid.isEmpty()) {
-                // Comparaison ligne par ligne : valeur saisie, sinon valeur lue sur la copie, sinon texte libre
-                Map<String, String> typed = new java.util.HashMap<>(response != null && response.values() != null ? response.values() : Map.of());
-                typed.remove("answer");
-                String prefix = question.getId() + ":";
-                Map<String, String> scanned = new java.util.HashMap<>();
-                extracted.forEach((k, v) -> { if (k.startsWith(prefix)) scanned.put(k.substring(prefix.length()), v); });
-                var result = gridService.compare(grid, typed, scanned,
-                    joinTexts(textAnswerOf(response), passage.getOcrExtractedText()));
-                score += (int) Math.round(question.getPoints() * result.ratio());
-                correct = result.rows().stream().allMatch(CorrectionGridService.RowResult::correct);
-                comparisonReports.add(result.report());
-                correctionDetail.add(Map.of("questionId", question.getId(), "earned", result.earned(),
-                    "total", result.total(), "rows", result.rows()));
-                if (hasPaperCopy && (passage.getOcrExtractedText() == null || passage.getOcrExtractedText().isBlank())) {
-                    comparisonReports.add("Transcription de la copie scannée indisponible : vérifiez la copie manuellement.");
+            boolean correct;
+            if (paperCase) {
+                String typed = typedAnswerOf(response);
+                // Contrôle : chiffres du corrigé retrouvés dans la réponse (zone de saisie + copie papier)
+                var expected = comparisonService.expectedValues(correctionTextFor(question, qcm), subjectTextFor(question, qcm));
+                var numbers = comparisonService.compare(expected, joinTexts(typed, passage.getOcrExtractedText()));
+                var aiGrade = caseGrade == null ? null : caseGrade.questions().get(question.getId());
+                int questionScore;
+                String source;
+                if (aiGrade != null) {
+                    questionScore = (int) Math.round(aiGrade.score());
+                    source = "IA";
+                } else if (!expected.isEmpty()) {
+                    questionScore = (int) Math.round(question.getPoints() * numbers.ratio());
+                    source = "chiffres";
+                    caseGradePending = true;
+                } else {
+                    questionScore = 0;
+                    source = "manuelle";
+                    caseGradePending = true;
                 }
-            } else if (paperCase) {
-                score += ocrScoreForQuestion(passage, question, qcm);
+                score += questionScore;
+                caseScore = (caseScore == null ? 0 : caseScore) + questionScore;
+                correct = questionScore >= question.getPoints();
+
+                Map<String, Object> detail = new LinkedHashMap<>();
+                detail.put("questionId", question.getId());
+                detail.put("questionText", shorten(question.getQuestionText(), 160));
+                detail.put("points", question.getPoints());
+                detail.put("score", questionScore);
+                detail.put("source", source);
+                detail.put("comment", aiGrade != null ? aiGrade.comment() : null);
+                detail.put("numbersFound", numbers.matched());
+                detail.put("numbersTotal", numbers.total());
+                detail.put("numbersMissing", numbers.missing().stream().map(CorrectionComparisonService.ExpectedValue::raw).toList());
+                correctionDetail.add(detail);
             } else if ("PRACTICAL".equals(question.getQuestionType())) {
-                score += (int) Math.round(question.getPoints() * practicalRatio);
-            } else if (correct) {
-                score += question.getPoints();
+                double ratio = gradePractical(question, response != null ? response.values() : Map.of());
+                score += (int) Math.round(question.getPoints() * ratio);
+                correct = ratio >= 0.999;
+            } else {
+                correct = chosen != null && Boolean.TRUE.equals(chosen.getIsCorrect());
+                if (correct) score += question.getPoints();
             }
 
             String typedAnswer = paperCase || "LONG_TEXT".equalsIgnoreCase(question.getQuestionType())
-                ? textAnswerOf(response) : null;
+                ? typedAnswerOf(response) : null;
             passage.getReponses().add(QcmReponse.builder()
                 .passage(passage).question(question)
                 .choiceSelected(chosen).textAnswer(typedAnswer).isCorrect(correct).build());
         }
 
-        if (!comparisonReports.isEmpty()) {
-            String aiNote = passage.getOcrCorrectionNote();
-            passage.setOcrCorrectionNote(String.join("\n\n", comparisonReports)
-                + (aiNote == null || aiNote.isBlank() ? "" : "\n\nAvis de l'IA : " + aiNote));
-        }
+        if (!correctionDetail.isEmpty()) notes.add(caseNote(correctionDetail, caseGrade, passage));
+        passage.setOcrScore(caseGrade != null ? caseScore : null);
+        passage.setOcrCorrectionNote(notes.isEmpty() ? null : String.join("\n\n", notes));
         try {
             passage.setCorrectionDetail(correctionDetail.isEmpty() ? null : objectMapper.writeValueAsString(correctionDetail));
         } catch (Exception e) {
@@ -221,21 +265,49 @@ public class QcmSubmissionService {
         passage.setMaxScore(maxScore > 0 ? maxScore : 1);
         passage.setIsSubmitted(true);
         passage.setSubmittedAt(LocalDateTime.now());
-        return passageRepo.save(passage);
+        QcmPassage saved = passageRepo.save(passage);
+        // Note provisoire : correction par l'IA en arrière-plan, une fois la copie enregistrée
+        if (caseGradePending && caseGrade == null) events.publishEvent(new CaseGradingRequested(saved.getId()));
+        return saved;
     }
 
     /**
-     * Recorrige une copie déjà soumise avec ses réponses enregistrées, par exemple quand la lecture de la
-     * copie papier se termine après la soumission. Une note modifiée par le professeur n'est jamais écrasée.
+     * Recorrige une copie déjà soumise avec ses réponses enregistrées et une nouvelle correction par l'IA
+     * (copie lue ou corrigée après la soumission). Une note modifiée par le professeur n'est jamais écrasée.
      */
     @Transactional
-    public void regrade(QcmPassage passage) {
+    public void regrade(QcmPassage passage, QcmCaseOcrGradingService.CaseGrade caseGrade) {
         if (!Boolean.TRUE.equals(passage.getIsSubmitted()) || passage.getManualScore() != null) return;
         LocalDateTime submittedAt = passage.getSubmittedAt();
         passage.setIsSubmitted(false);
-        submit(passage, readDraft(passage));
+        submit(passage, readDraft(passage), caseGrade);
         passage.setSubmittedAt(submittedAt);
         passageRepo.save(passage);
+    }
+
+    /** Note du professeur : synthèse de l'IA, note et commentaire par question, chiffres du corrigé retrouvés. */
+    private String caseNote(List<Map<String, Object>> details, QcmCaseOcrGradingService.CaseGrade caseGrade, QcmPassage passage) {
+        StringBuilder sb = new StringBuilder();
+        if (caseGrade != null) {
+            sb.append("Correction par l'IA (zone de saisie et copie papier).");
+            if (caseGrade.comment() != null && !caseGrade.comment().isBlank()) sb.append("\n").append(caseGrade.comment());
+        } else {
+            sb.append("Correction par l'IA en attente ou indisponible : note provisoire calculée à partir des chiffres du corrigé retrouvés dans la réponse.");
+        }
+        for (Map<String, Object> d : details) {
+            sb.append("\n\n").append(d.get("questionText")).append(" — ").append(d.get("score")).append("/").append(d.get("points"));
+            if (d.get("comment") != null && !d.get("comment").toString().isBlank()) sb.append("\n").append(d.get("comment"));
+            if (((Number) d.get("numbersTotal")).intValue() > 0) {
+                sb.append("\nChiffres du corrigé retrouvés : ").append(d.get("numbersFound")).append("/").append(d.get("numbersTotal"));
+                @SuppressWarnings("unchecked") List<String> missing = (List<String>) d.get("numbersMissing");
+                if (!missing.isEmpty()) sb.append(" (absents ou différents : ").append(String.join(", ", missing)).append(")");
+            }
+        }
+        boolean hasPaperCopy = passage.getPaperCorrectionUrl() != null && !passage.getPaperCorrectionUrl().isBlank();
+        if (hasPaperCopy && (passage.getOcrExtractedText() == null || passage.getOcrExtractedText().isBlank())) {
+            sb.append("\n\nLa copie papier n'a pas pu être lue automatiquement : vérifiez-la.");
+        }
+        return sb.toString();
     }
 
     /** Devoir « documentaire » sans question : note recalculée tant que le professeur ne l'a pas modifiée. */
@@ -252,30 +324,46 @@ public class QcmSubmissionService {
 
     // ── Outils ─────────────────────────────────────────────────────────────
 
-    private Map<String, String> readMap(String json) {
-        if (json == null || json.isBlank()) return Map.of();
-        try {
-            return objectMapper.readValue(json, new TypeReference<Map<String, String>>() {});
-        } catch (Exception e) {
-            return Map.of();
-        }
+    private static Map<Long, Answer> responseMap(Submission input) {
+        return input.reponses() == null ? Map.of() : input.reponses().stream()
+            .filter(r -> r != null && r.questionId() != null)
+            .collect(Collectors.toMap(Answer::questionId, r -> r, (a, b) -> b));
     }
 
+    /** Corrigé d'une question : réponse attendue, sinon correction structurée, sinon correction du devoir. */
+    public String correctionTextFor(QcmQuestion question, Qcm qcm) {
+        return firstNonBlank(PLACEHOLDER_ANSWER.equals(question.getExpectedAnswer()) ? null : question.getExpectedAnswer(),
+            question.getCorrectionData(), qcm.getCorrectionText());
+    }
+
+    private static String subjectTextFor(QcmQuestion question, Qcm qcm) {
+        return firstNonBlank(qcm.getSubjectText(), question.getQuestionText());
+    }
 
     private static String joinTexts(String... texts) {
         return Arrays.stream(texts).filter(t -> t != null && !t.isBlank()).collect(Collectors.joining("\n"));
     }
 
-    /** Cas pratique répondu : rédaction ou au moins un résultat saisi dans le tableau de la grille. */
+    /** Cas pratique répondu : rédaction ou au moins une case du tableau du sujet remplie. */
     private static boolean hasCaseAnswer(Answer response) {
         return response != null && response.values() != null
             && response.values().values().stream().anyMatch(v -> v != null && !v.isBlank());
     }
 
-    private static String textAnswerOf(Answer response) {
+    /**
+     * Réponse saisie pour une question : la rédaction de la zone de saisie, suivie des cases remplies
+     * dans le tableau du sujet (« ligne : valeur »).
+     */
+    static String typedAnswerOf(Answer response) {
         if (response == null || response.values() == null) return null;
+        List<String> parts = new ArrayList<>();
         String answer = response.values().get("answer");
-        return answer == null || answer.isBlank() ? null : answer.trim();
+        if (answer != null && !answer.isBlank()) parts.add(answer.trim());
+        response.values().entrySet().stream()
+            .filter(e -> !"answer".equals(e.getKey()) && e.getValue() != null && !e.getValue().isBlank())
+            .sorted(Map.Entry.comparingByKey())
+            .forEach(e -> parts.add(e.getKey() + " : " + e.getValue().trim()));
+        return parts.isEmpty() ? null : String.join("\n", parts);
     }
 
     public boolean isPaperCase(QcmQuestion question) {
@@ -288,11 +376,14 @@ public class QcmSubmissionService {
         return qcm.getQuestions().stream().anyMatch(this::isPaperCase);
     }
 
-    private int ocrScoreForQuestion(QcmPassage passage, QcmQuestion question, Qcm qcm) {
-        if (passage.getOcrScore() == null) return 0;
-        int caseMax = qcm.getQuestions().stream().filter(this::isPaperCase).mapToInt(QcmQuestion::getPoints).sum();
-        if (caseMax <= 0) return 0;
-        return (int) Math.round(passage.getOcrScore() * question.getPoints() / (double) caseMax);
+    private static String firstNonBlank(String... values) {
+        for (String v : values) if (v != null && !v.isBlank()) return v;
+        return null;
+    }
+
+    private static String shorten(String text, int max) {
+        String t = text == null ? "" : text.trim();
+        return t.length() > max ? t.substring(0, max) + "…" : t;
     }
 
     private double gradePractical(QcmQuestion question, Map<String, String> submitted) {

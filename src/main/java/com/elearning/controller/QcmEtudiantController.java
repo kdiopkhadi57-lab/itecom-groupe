@@ -15,7 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import com.elearning.service.QcmSubmissionService;
-import com.elearning.service.CorrectionGridService;
+import com.elearning.service.CaseGradingService;
 import com.elearning.service.PaperCopyService;
 import java.util.concurrent.CompletableFuture;
 
@@ -28,6 +28,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/qcm")
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public class QcmEtudiantController {
 
     private final QcmRepository qcmRepo;
@@ -37,7 +38,7 @@ public class QcmEtudiantController {
     private final EmailService emailService;
     private final ObjectMapper objectMapper;
     private final QcmSubmissionService submissionService;
-    private final CorrectionGridService gridService;
+    private final CaseGradingService caseGradingService;
     private final PaperCopyService paperCopyService;
 
     private static final int DEFAULT_ESTIMATED_DURATION_MINUTES = 30;
@@ -58,10 +59,9 @@ public class QcmEtudiantController {
     // ── DTOs ───────────────────────────────────────────────────────────────
 
     @Data static class ChoiceDto    { Long id; String choiceText; Integer orderIndex; }
-    @Data static class GridRowDto   { String id; String label; String question; }
-    @Data static class QuestionDto  { Long id; String questionText; Integer points; Integer orderIndex; String questionType; String caseScenario; List<String> valueLabels; List<ChoiceDto> choices; List<GridRowDto> gridRows; }
+    @Data static class QuestionDto  { Long id; String questionText; Integer points; Integer orderIndex; String questionType; String caseScenario; List<String> valueLabels; List<ChoiceDto> choices; }
     @Data static class QcmListDto   { Long id; String title; String description; String professorName; int questionCount; boolean alreadyTaken; String createdAt; Integer score; Integer maxScore; }
-    @Data static class QcmTakeDto   { Long id; String title; String description; String subjectFileUrl; String subjectText; Long passageId; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String paperCorrectionUrl; String paperCorrectionFilename; List<PaperCopyService.Page> paperPages; String startedAt; String draftAnswers; List<QuestionDto> questions; }
+    @Data static class QcmTakeDto   { Long id; String title; String description; String subjectFileUrl; String subjectText; Long passageId; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String paperCorrectionUrl; String paperCorrectionFilename; List<PaperCopyService.Page> paperPages; String paperTranscription; String startedAt; String draftAnswers; List<QuestionDto> questions; }
 
     @Data static class AccesDto     { Long id; String title; String description; Integer estimatedDurationMinutes; int questionCount; String studentName; String studentLevel;
                                       String lastName; String firstName; String birthDate; String level; }
@@ -200,6 +200,7 @@ public class QcmEtudiantController {
         dto.paperCorrectionUrl = passage.getPaperCorrectionUrl();
         dto.paperCorrectionFilename = passage.getPaperCorrectionFilename();
         dto.paperPages = paperCopyService.pages(passage);
+        dto.paperTranscription = passage.getOcrExtractedText();
         dto.startedAt = passage.getStartedAt() != null ? passage.getStartedAt().toString() : null;
         dto.draftAnswers = passage.getDraftAnswers();
         if (qcm.getQuestions().stream().noneMatch(question -> "CASE".equalsIgnoreCase(question.getQuestionType()))) {
@@ -227,15 +228,6 @@ public class QcmEtudiantController {
             qd.questionType = q.getQuestionType();
             qd.caseScenario = q.getCaseScenario();
             qd.valueLabels = practicalLabels(q.getCorrectionData());
-            if (isPaperCase(q)) {
-                // Uniquement l'identifiant et le libellé des lignes : aucun texte issu de la correction
-                // (l'énoncé d'une ligne peut contenir des calculs ou le résultat attendu)
-                qd.gridRows = gridService.gridFor(q, qcm).stream().map(row -> {
-                    GridRowDto g = new GridRowDto();
-                    g.id = row.id(); g.label = row.label();
-                    return g;
-                }).collect(Collectors.toList());
-            }
             // On N'envoie PAS isCorrect à l'étudiant
             qd.choices = q.getChoices().stream().map(c -> {
                 ChoiceDto cd = new ChoiceDto();
@@ -296,39 +288,31 @@ public class QcmEtudiantController {
         body.put("url", first == null ? null : first.url());
         body.put("filename", first == null ? null : first.filename());
         body.put("pages", outcome.pages());
-        // Valeurs lues renvoyées à l'étudiant pour qu'il les vérifie (et corrige une erreur de lecture)
-        body.put("readValues", outcome.readValues());
+        // Texte lu sur la copie, renvoyé à l'étudiant pour qu'il vérifie la lecture
+        body.put("transcription", outcome.transcription());
         if (outcome.warning() != null) body.put("ocrWarning", outcome.warning());
         return ResponseEntity.ok(body);
     }
 
     // ── Soumettre les réponses ─────────────────────────────────────────────
 
+    /**
+     * Soumission : traitée hors du thread de la requête, car le cas pratique est corrigé par l'IA
+     * (voir {@link CaseGradingService}) sans retenir de connexion à la base pendant l'appel.
+     */
     @PostMapping("/{id}/soumettre")
-    @Transactional
-    public ResponseEntity<?> soumettre(
+    public CompletableFuture<ResponseEntity<?>> soumettre(
             @PathVariable Long id,
             @RequestBody QcmSubmissionService.Submission input,
             Authentication auth) {
-
-        User student = userRepo.findByEmail(auth.getName()).orElseThrow();
-        Qcm qcm = qcmRepo.findById(id).orElseThrow();
-        QcmPassage passage = passageRepo.findByQcmAndStudent(qcm, student).orElse(null);
-        if (passage == null) {
-            return ResponseEntity.badRequest().body(Map.of("message", "Commencez le devoir avant de le soumettre."));
-        }
-        if (Boolean.TRUE.equals(passage.getIsSubmitted())) {
-            // Copie déjà soumise (par exemple automatiquement) : on renvoie le résultat enregistré
-            return ResponseEntity.ok(buildResultat(passage, qcm));
-        }
-        // Les réponses sont d'abord conservées : rien n'est perdu si la soumission est refusée
-        submissionService.saveDraft(passage, input);
-        try {
-            submissionService.submit(passage, input);
-        } catch (QcmSubmissionService.SubmissionRefusedException e) {
-            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
-        }
-        return ResponseEntity.ok(buildResultat(passage, qcm));
+        return caseGradingService.submit(id, auth.getName(), input, passage -> buildResultat(passage, passage.getQcm()))
+            .<ResponseEntity<?>>thenApply(outcome -> outcome.refusal() != null
+                ? ResponseEntity.status(outcome.status()).body(Map.of("message", outcome.refusal()))
+                : ResponseEntity.ok(outcome.result()))
+            .exceptionally(e -> {
+                log.error("Soumission du devoir {} impossible : {}", id, e.getMessage(), e);
+                return ResponseEntity.internalServerError().body(Map.of("message", "La soumission a échoué : réessayez."));
+            });
     }
 
     /** Enregistrement régulier des réponses pendant le devoir. */

@@ -1,8 +1,6 @@
 package com.elearning.service;
 
-import com.elearning.entity.Qcm;
 import com.elearning.entity.QcmPassage;
-import com.elearning.entity.QcmQuestion;
 import com.elearning.repository.QcmPassageRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,23 +11,18 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.function.Supplier;
-import jakarta.annotation.PreDestroy;
 
 /**
- * Copie papier d'un devoir : une ou plusieurs pages (photos ou PDF), lues ensemble par l'OCR.
+ * Copie papier d'un devoir : une ou plusieurs pages (photos ou PDF), transcrites ensemble par l'OCR.
+ * La transcription sert ensuite à la correction du cas pratique, avec la zone de saisie.
  *
  * La lecture par l'IA peut durer une minute : elle se fait hors transaction, entre deux accès
- * courts à la base (enregistrement des pages, puis des valeurs lues), pour ne pas monopoliser
- * une connexion pendant l'appel quand toute une classe envoie ses copies en même temps.
- * Ces méthodes doivent donc être appelées hors d'un contexte de persistance ouvert.
+ * courts à la base (enregistrement des pages, puis du texte lu), pour ne pas monopoliser une
+ * connexion pendant l'appel quand toute une classe envoie ses copies en même temps.
  */
 @Service
 @Slf4j
@@ -42,8 +35,8 @@ public class PaperCopyService {
 
     public record Upload(byte[] data, String contentType, String filename) {}
 
-    /** Pages de la copie, valeurs lues par ligne de grille (idQuestion → idLigne → valeur), avertissement éventuel. */
-    public record Outcome(List<Page> pages, Map<String, Map<String, String>> readValues, String warning) {}
+    /** Pages de la copie, texte lu sur la copie (à vérifier par l'étudiant), avertissement éventuel. */
+    public record Outcome(List<Page> pages, String transcription, String warning) {}
 
     /** Envoi refusé, avec le code HTTP et le message à afficher à l'étudiant. */
     public static class RefusedException extends RuntimeException {
@@ -61,49 +54,32 @@ public class PaperCopyService {
     public record Result(Outcome outcome, RefusedException error) {}
 
     /** Ce qu'il faut pour lire la copie sans revenir à la base pendant l'appel à l'IA. */
-    private record Snapshot(Long passageId, List<Page> pages, List<QcmCaseOcrGradingService.RowToRead> rows,
-                            boolean hasPaperCase, QcmCaseOcrGradingService.GradingPrompt grading) {}
+    private record Snapshot(Long passageId, List<Page> pages) {}
 
     private final QcmPassageRepository passageRepo;
     private final FileStorageService fileStorage;
     private final QcmCaseOcrGradingService ocr;
-    private final CorrectionGridService gridService;
-    private final QcmSubmissionService submissionService;
+    private final CaseGradingService caseGradingService;
+    private final AiTaskExecutor executor;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate tx;
 
-    /**
-     * Threads de lecture des copies. Exécuter le traitement hors du thread de la requête évite le contexte
-     * JPA ouvert pour la vue, qui garderait la connexion à la base pendant tout l'appel à l'IA ; le pool
-     * limite aussi le nombre de lectures simultanées quand toute une classe rend sa copie.
-     */
-    private final ExecutorService executor = Executors.newFixedThreadPool(8, runnable -> {
-        Thread thread = new Thread(runnable, "copie-ocr");
-        thread.setDaemon(true);
-        return thread;
-    });
-
     public PaperCopyService(QcmPassageRepository passageRepo, FileStorageService fileStorage,
-                            QcmCaseOcrGradingService ocr, CorrectionGridService gridService,
-                            QcmSubmissionService submissionService, ObjectMapper objectMapper,
+                            QcmCaseOcrGradingService ocr, CaseGradingService caseGradingService,
+                            AiTaskExecutor executor, ObjectMapper objectMapper,
                             PlatformTransactionManager transactionManager) {
         this.passageRepo = passageRepo;
         this.fileStorage = fileStorage;
         this.ocr = ocr;
-        this.gridService = gridService;
-        this.submissionService = submissionService;
+        this.caseGradingService = caseGradingService;
+        this.executor = executor;
         this.objectMapper = objectMapper;
         this.tx = new TransactionTemplate(transactionManager);
     }
 
-    @PreDestroy
-    void shutdown() {
-        executor.shutdown();
-    }
-
-    /** Exécute un traitement de copie sur le pool dédié ; les erreurs deviennent un refus avec message. */
+    /** Exécute un traitement de copie hors du thread de la requête ; les erreurs deviennent un refus avec message. */
     public CompletableFuture<Result> async(Supplier<Outcome> action) {
-        return CompletableFuture.supplyAsync(() -> {
+        return executor.run(() -> {
             try {
                 return new Result(action.get(), null);
             } catch (RefusedException e) {
@@ -112,7 +88,7 @@ public class PaperCopyService {
                 log.error("Traitement de la copie papier impossible : {}", e.getMessage(), e);
                 return new Result(null, new RefusedException(500, "Impossible d'enregistrer la copie."));
             }
-        }, executor);
+        });
     }
 
     // ── Pages ──────────────────────────────────────────────────────────────
@@ -200,19 +176,7 @@ public class PaperCopyService {
     }
 
     private Snapshot snapshot(QcmPassage passage) {
-        Qcm qcm = passage.getQcm();
-        // Lignes de grille à lire sur la copie (clé « idQuestion:idLigne »), sans les chiffres de la correction
-        List<QcmCaseOcrGradingService.RowToRead> rows = new ArrayList<>();
-        for (QcmQuestion q : qcm.getQuestions()) {
-            if (!submissionService.isPaperCase(q)) continue;
-            for (CorrectionGridService.GridRow row : gridService.gridFor(q, qcm)) {
-                rows.add(new QcmCaseOcrGradingService.RowToRead(q.getId() + ":" + row.id(), row.label(),
-                    CorrectionGridService.withoutNumbers(row.question())));
-            }
-        }
-        boolean hasPaperCase = submissionService.hasPaperCase(qcm);
-        return new Snapshot(passage.getId(), pages(passage), rows, hasPaperCase,
-            hasPaperCase && rows.isEmpty() ? ocr.prepareGrading(qcm) : null);
+        return new Snapshot(passage.getId(), pages(passage));
     }
 
     // ── Lecture de la copie ────────────────────────────────────────────────
@@ -229,58 +193,24 @@ public class PaperCopyService {
             }
         }
 
-        // Appel à l'IA hors transaction
-        Map<String, String> answers = Map.of();
-        String transcription = null;
-        QcmCaseOcrGradingService.GradeResult grade = null;
-        boolean read = files.isEmpty() || filesRead;
-        if (!files.isEmpty()) {
-            if (!snapshot.rows().isEmpty()) {
-                QcmCaseOcrGradingService.Extraction extraction = ocr.extractAnswers(snapshot.rows(), files);
-                answers = extraction.answers();
-                transcription = extraction.transcription();
-                read &= extraction.read();
-            } else if (!snapshot.hasPaperCase()) {
-                transcription = ocr.transcribe(files);
-                read &= !transcription.isBlank();
-            } else {
-                grade = ocr.grade(snapshot.grading(), files);
-                transcription = grade.extractedText();
-                read &= !transcription.isBlank();
-            }
-        }
+        // Transcription de toutes les pages par l'IA, hors transaction
+        String transcription = files.isEmpty() ? "" : ocr.transcribe(files);
+        boolean read = files.isEmpty() || (filesRead && !transcription.isBlank());
 
-        final Map<String, String> readAnswers = answers;
-        final String readText = transcription;
-        final QcmCaseOcrGradingService.GradeResult readGrade = grade;
-        List<Page> current = tx.execute(status -> {
+        Boolean submitted = tx.execute(status -> {
             QcmPassage passage = passageRepo.findById(snapshot.passageId()).orElseThrow();
-            List<Page> pages = pages(passage);
             // Pages modifiées entre-temps (autre envoi en cours) : c'est la lecture la plus récente qui s'enregistre
-            if (!Objects.equals(pages, snapshot.pages())) return pages;
-            try {
-                passage.setExtractedAnswers(readAnswers.isEmpty() ? null : objectMapper.writeValueAsString(readAnswers));
-            } catch (Exception e) {
-                throw new IllegalStateException(e);
-            }
-            passage.setOcrExtractedText(readText == null || readText.isBlank() ? null : readText);
-            passage.setOcrScore(readGrade == null ? null : readGrade.score());
-            passage.setOcrCorrectionNote(readGrade == null ? null : readGrade.comment());
+            if (!Objects.equals(pages(passage), snapshot.pages())) return null;
+            passage.setOcrExtractedText(transcription.isBlank() ? null : transcription);
             passageRepo.save(passage);
-            // Copie soumise pendant la lecture (fin du temps) : recorrigée avec les valeurs lues
-            submissionService.regrade(passage);
-            return pages;
+            return Boolean.TRUE.equals(passage.getIsSubmitted());
         });
+        // Copie soumise pendant la lecture (fin du temps) : recorrigée avec le texte lu
+        if (Boolean.TRUE.equals(submitted)) caseGradingService.regradeNow(snapshot.passageId());
 
-        Map<String, Map<String, String>> readValues = new LinkedHashMap<>();
-        readAnswers.forEach((key, value) -> {
-            int sep = key.indexOf(':');
-            if (sep > 0) readValues.computeIfAbsent(key.substring(0, sep), k -> new LinkedHashMap<>())
-                .put(key.substring(sep + 1), value);
-        });
         String warning = read ? null : "Votre copie est bien jointe, mais elle n'a pas pu être lue automatiquement : "
-            + "saisissez vos résultats, ou envoyez des photos plus nettes.";
-        return new Outcome(current, readValues, warning);
+            + "vérifiez qu'elle est nette, ou rédigez votre réponse dans la zone de saisie.";
+        return new Outcome(snapshot.pages(), transcription.isBlank() ? null : transcription, warning);
     }
 
     private static boolean isPdf(Upload upload) {

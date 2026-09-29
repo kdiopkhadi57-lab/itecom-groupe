@@ -29,11 +29,7 @@ public class QcmPassage {
 
     private LocalDateTime submittedAt;
 
-    // Valeurs lues sur la copie PDF / image, par ligne de grille (JSON « idQuestion:idLigne » → valeur)
-    @Column(columnDefinition = "TEXT")
-    private String extractedAnswers;
-
-    // Détail de la correction ligne par ligne (JSON)
+    // Détail de la correction du cas pratique, par question (JSON : note, commentaire de l'IA, chiffres retrouvés)
     @Column(columnDefinition = "TEXT")
     private String correctionDetail;
 
@@ -76,7 +72,7 @@ public class QcmPassage {
     @Column(columnDefinition = "TEXT")
     private String ocrCorrectionNote;
 
-    // Transcription (OCR) de la copie scannée, comparée chiffre par chiffre à la correction
+    // Transcription (OCR) de toutes les pages de la copie papier, utilisée pour la correction
     @Column(columnDefinition = "TEXT")
     private String ocrExtractedText;
 
