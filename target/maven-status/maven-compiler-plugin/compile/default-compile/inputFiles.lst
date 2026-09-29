@@ -14,7 +14,9 @@
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/service/DocumentTextExtractorService.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/repository/ExamSubmissionRepository.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/dto/request/QcmFullscreenViolationRequest.java
+/Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/service/CaseGradingService.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/entity/QcmPassage.java
+/Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/controller/TeacherCourseProgressController.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/controller/CourseUploadController.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/dto/response/ExamAnswerDetailResponse.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/entity/VirtualClass.java
@@ -33,10 +35,13 @@
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/config/FormationDataSeeder.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/entity/StudentExamStatus.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/repository/ProgressRepository.java
+/Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/entity/VirtualClassAttendance.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/controller/AuthController.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/repository/ExamAnswerRepository.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/dto/request/RegisterRequest.java
+/Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/repository/VirtualClassAttendanceRepository.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/entity/ExamAnswer.java
+/Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/service/AiTaskExecutor.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/entity/VirtualClassStudent.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/entity/Course.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/controller/AdminExamController.java
@@ -75,7 +80,9 @@
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/dto/response/ExamStudentResponse.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/dto/response/ProgressResponse.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/dto/response/ExamQuestionResponse.java
+/Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/service/QcmSubmissionService.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/entity/QcmReponse.java
+/Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/service/CorrectionComparisonService.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/repository/ExamQuestionRepository.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/controller/QcmEtudiantController.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/service/StudentListParserService.java
@@ -96,10 +103,12 @@
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/service/ExamSubmissionService.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/security/jwt/JwtAuthFilter.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/dto/response/CourseResponse.java
+/Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/controller/VirtualClassAttendanceController.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/repository/VirtualClassRepository.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/config/WebConfig.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/service/WordToPdfConverterService.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/config/AnthropicConfig.java
+/Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/service/PaperCopyService.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/dto/response/ExamTakeResponse.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/entity/Qcm.java
 /Users/mac/Desktop/elearning-platform/backend/src/main/java/com/elearning/entity/Reference.java

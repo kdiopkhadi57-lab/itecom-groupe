@@ -1,0 +1,5 @@
+com/elearning/service/StudentListParserServiceTest.class
+com/elearning/dto/request/ExamQuestionRequestTest.class
+com/elearning/controller/QcmControllerStudentAccountsTest.class
+com/elearning/controller/QcmControllerTest.class
+com/elearning/service/DocumentTextExtractorServiceTest.class
