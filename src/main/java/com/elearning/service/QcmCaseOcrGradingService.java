@@ -59,14 +59,15 @@ public class QcmCaseOcrGradingService {
     /** Ligne de grille à retrouver sur la copie : clé « idQuestion:idLigne », libellé et énoncé (jamais la réponse). */
     public record RowToRead(String key, String label, String question) {}
 
-    public record Extraction(Map<String, String> answers, String transcription) {}
+    /** {@code read} est faux quand la copie n'a pas pu être lue (appel IA en échec, réponse tronquée…). */
+    public record Extraction(Map<String, String> answers, String transcription, boolean read) {}
 
     /**
      * Lecture de la copie (PDF texte ou scanné, photo) et extraction des résultats de l'étudiant
      * sous forme JSON, une valeur par ligne de la grille de correction.
      */
     public Extraction extractAnswers(List<RowToRead> rows, List<ScannedFile> studentFiles) {
-        if (client == null || studentFiles.isEmpty()) return new Extraction(Map.of(), "");
+        if (client == null || studentFiles.isEmpty()) return new Extraction(Map.of(), "", false);
         StringBuilder prompt = new StringBuilder("""
             Tu lis la copie d'un étudiant (PDF ou photo, manuscrite ou imprimée). Lis tout : texte, calculs, tableaux
             (chaque ligne et chaque colonne), annotations. Pour chaque ligne demandée ci-dessous, recopie le RÉSULTAT FINAL
@@ -93,6 +94,9 @@ public class QcmCaseOcrGradingService {
                 .model(Model.of(model)).maxTokens(12000L)
                 .addUserMessageOfBlockParams(content).build();
             Message response = client.messages().create(params);
+            if (response.stopReason().map(StopReason.MAX_TOKENS::equals).orElse(false)) {
+                log.warn("Lecture de la copie tronquée (limite de tokens atteinte)");
+            }
             String raw = response.content().stream().flatMap(block -> block.text().stream())
                 .map(TextBlock::text).findFirst().orElse("{}");
             int start = raw.indexOf('{');
@@ -102,10 +106,10 @@ public class QcmCaseOcrGradingService {
             node.path("answers").fields().forEachRemaining(e -> {
                 if (!e.getValue().isNull() && !e.getValue().asText().isBlank()) answers.put(e.getKey(), e.getValue().asText().trim());
             });
-            return new Extraction(answers, node.path("transcription").asText(""));
+            return new Extraction(answers, node.path("transcription").asText(""), true);
         } catch (Exception e) {
             log.error("Extraction des réponses de la copie impossible : {}", e.getMessage());
-            return new Extraction(Map.of(), "");
+            return new Extraction(Map.of(), "", false);
         }
     }
 
@@ -173,22 +177,73 @@ public class QcmCaseOcrGradingService {
             && question.getCaseScenario() != null && !question.getCaseScenario().isBlank());
     }
 
+    /** Formats lisibles par l'OCR : PDF et images JPEG, PNG, WEBP, GIF (pas de HEIC, TIFF…). */
+    public static boolean isSupported(String contentType, String filename) {
+        String type = contentType == null ? "" : contentType.toLowerCase();
+        String name = filename == null ? "" : filename.toLowerCase();
+        return type.contains("pdf") || name.endsWith(".pdf") || resolveImageType(type, name) != null;
+    }
+
     private ContentBlockParam toContentBlock(ScannedFile file) {
-        String b64 = Base64.getEncoder().encodeToString(file.data());
         String type = file.contentType() == null ? "" : file.contentType().toLowerCase();
         String name = file.filename() == null ? "" : file.filename().toLowerCase();
         if (type.contains("pdf") || name.endsWith(".pdf")) {
             return ContentBlockParam.ofDocument(DocumentBlockParam.builder()
-                .source(Base64PdfSource.builder().data(b64).build()).build());
+                .source(Base64PdfSource.builder().data(Base64.getEncoder().encodeToString(file.data())).build()).build());
+        }
+        Base64ImageSource.MediaType mediaType = resolveImageType(type, name);
+        byte[] data = file.data();
+        byte[] reduced = downscale(data);
+        if (reduced != null) {
+            data = reduced;
+            mediaType = Base64ImageSource.MediaType.IMAGE_JPEG;
         }
         return ContentBlockParam.ofImage(ImageBlockParam.builder()
-            .source(Base64ImageSource.builder().data(b64).mediaType(resolveImageType(type, name)).build()).build());
+            .source(Base64ImageSource.builder().data(Base64.getEncoder().encodeToString(data))
+                .mediaType(mediaType == null ? Base64ImageSource.MediaType.IMAGE_JPEG : mediaType).build()).build());
     }
 
-    private Base64ImageSource.MediaType resolveImageType(String type, String name) {
+    private static Base64ImageSource.MediaType resolveImageType(String type, String name) {
         if (type.contains("png") || name.endsWith(".png")) return Base64ImageSource.MediaType.IMAGE_PNG;
         if (type.contains("webp") || name.endsWith(".webp")) return Base64ImageSource.MediaType.IMAGE_WEBP;
-        return Base64ImageSource.MediaType.IMAGE_JPEG;
+        if (type.contains("gif") || name.endsWith(".gif")) return Base64ImageSource.MediaType.IMAGE_GIF;
+        if (type.contains("jpeg") || type.contains("jpg") || name.endsWith(".jpg") || name.endsWith(".jpeg"))
+            return Base64ImageSource.MediaType.IMAGE_JPEG;
+        return null;
+    }
+
+    /** Taille maximale d'une image acceptée par l'API (5 Mo en base64), avec une marge. */
+    private static final int MAX_IMAGE_BYTES = 3_500_000;
+    /** Au-delà, l'API réduit elle-même l'image : inutile d'envoyer plus de pixels. */
+    private static final int MAX_IMAGE_SIDE = 2400;
+
+    /**
+     * Photo de téléphone trop lourde ou trop grande : réduite et réencodée en JPEG, sinon l'API la
+     * refuse et la copie n'est pas lue. Retourne null si l'image peut être envoyée telle quelle.
+     */
+    private static byte[] downscale(byte[] data) {
+        try {
+            java.awt.image.BufferedImage source = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(data));
+            if (source == null) return null; // format non décodable (WEBP…) : envoyé tel quel
+            int side = Math.max(source.getWidth(), source.getHeight());
+            if (data.length <= MAX_IMAGE_BYTES && side <= MAX_IMAGE_SIDE) return null;
+            double ratio = Math.min(1.0, MAX_IMAGE_SIDE / (double) side);
+            int w = Math.max(1, (int) Math.round(source.getWidth() * ratio));
+            int h = Math.max(1, (int) Math.round(source.getHeight() * ratio));
+            java.awt.image.BufferedImage target = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D g = target.createGraphics();
+            g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.setColor(java.awt.Color.WHITE);
+            g.fillRect(0, 0, w, h);
+            g.drawImage(source, 0, 0, w, h, null);
+            g.dispose();
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(target, "jpg", out);
+            return out.toByteArray();
+        } catch (Exception e) {
+            log.warn("Réduction de l'image de la copie impossible : {}", e.getMessage());
+            return null;
+        }
     }
 
     private String buildPrompt(Qcm qcm, List<QcmQuestion> questions) {

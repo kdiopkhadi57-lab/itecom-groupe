@@ -216,6 +216,15 @@ public class CorrectionGridService {
         return value;
     }
 
+    /**
+     * Énoncé d'une ligne sans ses chiffres, pour guider la lecture de la copie : l'énoncé est tiré de la
+     * correction et peut contenir le résultat attendu, que l'OCR risquerait alors de « lire » sur la copie.
+     */
+    public static String withoutNumbers(String text) {
+        if (text == null || text.isBlank()) return "";
+        return NUMBER.matcher(text).replaceAll("…").replaceAll("(…[\\s…]*)+", "… ").trim();
+    }
+
     private boolean close(GridRow row, double actual) {
         return Math.abs(row.expected() - actual) <= Math.max(0.005, Math.abs(row.expected()) * row.tolerance());
     }

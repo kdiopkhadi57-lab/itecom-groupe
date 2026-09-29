@@ -264,6 +264,10 @@ public class QcmEtudiantController {
         if (file == null || file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("message", "Sélectionnez une copie à envoyer."));
         }
+        if (!QcmCaseOcrGradingService.isSupported(file.getContentType(), file.getOriginalFilename())) {
+            return ResponseEntity.badRequest().body(Map.of("message",
+                "Format non pris en charge : envoyez une photo JPG, PNG ou WEBP, ou un PDF."));
+        }
         try {
             String url = fileStorageService.store(file, "devoirs/copies/" + student.getId());
             passage.setPaperCorrectionUrl(url);
@@ -276,13 +280,16 @@ public class QcmEtudiantController {
             for (QcmQuestion q : qcm.getQuestions()) {
                 if (!isPaperCase(q)) continue;
                 for (CorrectionGridService.GridRow row : gridService.gridFor(q, qcm)) {
-                    rows.add(new QcmCaseOcrGradingService.RowToRead(q.getId() + ":" + row.id(), row.label(), row.question()));
+                    rows.add(new QcmCaseOcrGradingService.RowToRead(q.getId() + ":" + row.id(), row.label(),
+                        CorrectionGridService.withoutNumbers(row.question())));
                 }
             }
             Map<String, Map<String, String>> readValues = new java.util.LinkedHashMap<>();
+            boolean read = true;
             if (!rows.isEmpty()) {
                 // Copie PDF ou image : résultats extraits en JSON, une valeur par ligne de la grille
                 QcmCaseOcrGradingService.Extraction extraction = caseOcrGradingService.extractAnswers(rows, List.of(scanned));
+                read = extraction.read();
                 passage.setExtractedAnswers(objectMapper.writeValueAsString(extraction.answers()));
                 passage.setOcrExtractedText(extraction.transcription());
                 passage.setOcrScore(null);
@@ -294,6 +301,7 @@ public class QcmEtudiantController {
                 });
             } else if (!hasPaperCase(qcm)) {
                 passage.setOcrExtractedText(caseOcrGradingService.transcribe(List.of(scanned)));
+                read = !passage.getOcrExtractedText().isBlank();
                 passageRepo.save(passage);
             } else {
                 QcmCaseOcrGradingService.GradeResult grade = caseOcrGradingService.grade(qcm, List.of(scanned));
@@ -305,7 +313,13 @@ public class QcmEtudiantController {
                 passageRepo.save(passage);
             }
             // Valeurs lues renvoyées à l'étudiant pour qu'il les vérifie (et corrige une erreur de lecture)
-            return ResponseEntity.ok(Map.of("url", url, "filename", file.getOriginalFilename(), "readValues", readValues));
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("url", url);
+            body.put("filename", file.getOriginalFilename());
+            body.put("readValues", readValues);
+            if (!read) body.put("ocrWarning", "Votre copie est bien jointe, mais elle n'a pas pu être lue automatiquement : "
+                + "saisissez vos résultats dans le tableau, ou envoyez une photo plus nette.");
+            return ResponseEntity.ok(body);
         } catch (java.io.IOException ex) {
             return ResponseEntity.internalServerError().body(Map.of("message", "Impossible d'enregistrer la copie."));
         }

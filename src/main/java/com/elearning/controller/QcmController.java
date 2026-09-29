@@ -74,6 +74,7 @@ public class QcmController {
         Integer manualScore; String manualCorrectionNote; Integer ocrScore; String ocrCorrectionNote; String paperCorrectionUrl; String paperCorrectionFilename;
         String status; String documentAnswer; String correctionText;
         Object correctionDetail; // correction ligne par ligne (JSON)
+        String ocrExtractedText;  // texte lu sur la copie scannée
         List<ReponseDetailDto> reponses;
     }
     @Data static class ReponseDetailDto {
@@ -917,6 +918,7 @@ public class QcmController {
         dto.ocrCorrectionNote = p.getOcrCorrectionNote();
         dto.paperCorrectionUrl = p.getPaperCorrectionUrl();
         dto.paperCorrectionFilename = p.getPaperCorrectionFilename();
+        dto.ocrExtractedText = p.getOcrExtractedText();
         if (dto.maxScore != null && dto.maxScore > 0 && dto.score != null) {
             dto.percentage = String.format("%.0f%%", (dto.score * 100.0) / dto.maxScore);
         } else {
