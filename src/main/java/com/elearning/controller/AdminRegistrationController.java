@@ -21,6 +21,7 @@ public class AdminRegistrationController {
 
     private final UserRepository userRepository;
     private final EmailService emailService;
+    private final com.elearning.service.ExamService examService;
 
     @Data
     static class RegistrationDto {
@@ -61,6 +62,7 @@ public class AdminRegistrationController {
         user.setEnabled(true);
         user.setRegistrationStatus("APPROVED");
         userRepository.save(user);
+        examService.enrollNewStudent(user);
         emailService.sendRegistrationApproved(user.getEmail(), user.getFirstName());
         return ResponseEntity.ok(Map.of("message", "Compte validé et étudiant notifié."));
     }

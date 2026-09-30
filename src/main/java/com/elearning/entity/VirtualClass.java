@@ -29,6 +29,10 @@ public class VirtualClass {
     @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "course_id") private Course course;
     @CreationTimestamp private LocalDateTime createdAt;
 
+    // Niveaux ciblés (ex. "L1,L3") : tous leurs étudiants, y compris ceux créés après la séance,
+    // y sont conviés en plus de la liste ci-dessous.
+    private String targetLevels;
+
     @OneToMany(mappedBy = "virtualClass", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<VirtualClassStudent> students = new ArrayList<>();

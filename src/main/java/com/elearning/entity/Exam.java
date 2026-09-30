@@ -37,6 +37,10 @@ public class Exam {
     @Builder.Default
     private List<ExamQuestion> questions = new ArrayList<>();
 
+    // Niveaux ciblés (ex. "L1,L3") : leurs étudiants sont inscrits à la création,
+    // et un étudiant créé plus tard dans ces niveaux est inscrit (et invité) automatiquement.
+    private String targetLevels;
+
     @OneToMany(mappedBy = "exam", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<ExamStudent> students = new ArrayList<>();

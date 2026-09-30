@@ -32,6 +32,7 @@ public class ExamService {
     private final ExamQuestionExtractionService questionExtractionService;
     private final EmailService emailService;
     private final UserRepository userRepository;
+    private final StudentAudienceService audienceService;
 
     @Transactional
     public ExamResponse createExam(ExamCreateRequest request, MultipartFile studentListFile,
@@ -101,18 +102,14 @@ public class ExamService {
         }
         exam.setQuestions(questions);
 
-        List<StudentListParserService.StudentInfo> studentInfos = parserService.parseFile(studentListFile);
-        List<ExamStudent> students = new ArrayList<>();
-        for (var info : studentInfos) {
-            students.add(ExamStudent.builder()
-                .exam(exam)
-                .studentName(info.name())
-                .studentEmail(info.email())
-                .accessToken(UUID.randomUUID().toString())
-                .status(StudentExamStatus.INVITED)
-                .build());
+        exam.setTargetLevels(StudentAudienceService.normalizeLevels(request.getTargetLevels()));
+        exam.setStudents(new ArrayList<>());
+        List<StudentListParserService.StudentInfo> listed = studentListFile == null || studentListFile.isEmpty()
+            ? List.of() : parserService.parseFile(studentListFile);
+        enroll(exam, listed, exam.getTargetLevels());
+        if (exam.getStudents().isEmpty()) {
+            throw new IllegalArgumentException("Choisissez au moins un niveau ou un étudiant.");
         }
-        exam.setStudents(students);
 
         Exam saved = examRepository.save(exam);
         return toExamResponse(saved);
@@ -178,39 +175,85 @@ public class ExamService {
     public ExamResponse addStudentsToExam(Long examId, org.springframework.web.multipart.MultipartFile file,
                                           String professorEmail) throws java.io.IOException {
         Exam exam = getExamForProfessor(examId, professorEmail);
-        List<StudentListParserService.StudentInfo> parsed = parserService.parseFile(file);
+        return addStudents(exam, parserService.parseFile(file), null);
+    }
 
-        // Emails déjà présents pour éviter les doublons
+    /** Ajout d'étudiants (comptes existants) et/ou de niveaux à un examen existant. */
+    @Transactional
+    public ExamResponse addStudentsToExam(Long examId, List<String> emails, List<String> levels, String professorEmail) {
+        Exam exam = getExamForProfessor(examId, professorEmail);
+        List<StudentListParserService.StudentInfo> infos = emails == null ? List.of() : emails.stream()
+            .filter(e -> e != null && !e.isBlank())
+            .map(e -> new StudentListParserService.StudentInfo(e.trim(), e.trim().toLowerCase()))
+            .toList();
+        return addStudents(exam, infos, StudentAudienceService.normalizeLevels(levels));
+    }
+
+    private ExamResponse addStudents(Exam exam, List<StudentListParserService.StudentInfo> infos, String newLevels) {
+        if (newLevels != null) {
+            List<String> merged = new ArrayList<>(StudentAudienceService.levelList(exam.getTargetLevels()));
+            merged.addAll(StudentAudienceService.levelList(newLevels));
+            exam.setTargetLevels(StudentAudienceService.normalizeLevels(merged));
+        }
+        List<ExamStudent> added = enroll(exam, infos, newLevels);
+        Exam saved = examRepository.save(exam);
+        invite(exam, added);
+        return toExamResponse(saved);
+    }
+
+    /**
+     * Inscrit les étudiants de la liste puis ceux des niveaux, sans doublon. Chaque email doit
+     * correspondre à un compte étudiant : l'étudiant se connecte avec le mot de passe de ce compte.
+     */
+    private List<ExamStudent> enroll(Exam exam, List<StudentListParserService.StudentInfo> listed, String levels) {
+        audienceService.requireStudentAccounts(listed.stream().map(StudentListParserService.StudentInfo::email).toList());
         java.util.Set<String> existing = exam.getStudents().stream()
-            .map(ExamStudent::getStudentEmail)
-            .collect(java.util.stream.Collectors.toSet());
-
+            .map(s -> s.getStudentEmail().toLowerCase())
+            .collect(java.util.stream.Collectors.toCollection(java.util.HashSet::new));
         boolean isPublished = exam.getStatus() == ExamStatus.PUBLISHED;
         List<ExamStudent> added = new ArrayList<>();
-
-        for (StudentListParserService.StudentInfo info : parsed) {
-            if (existing.contains(info.email())) continue;
+        java.util.function.BiConsumer<String, String> add = (name, email) -> {
+            if (!existing.add(email.toLowerCase())) return;
             ExamStudent s = ExamStudent.builder()
                 .exam(exam)
-                .studentName(info.name())
-                .studentEmail(info.email())
+                .studentName(name)
+                .studentEmail(email.toLowerCase())
                 .accessToken(UUID.randomUUID().toString())
                 .status(StudentExamStatus.INVITED)
                 .invitedAt(isPublished ? LocalDateTime.now() : null)
                 .build();
             exam.getStudents().add(s);
             added.add(s);
+        };
+        for (StudentListParserService.StudentInfo info : listed) {
+            User account = userRepository.findByEmail(info.email().trim().toLowerCase()).orElseThrow();
+            add.accept(StudentAudienceService.fullName(account), account.getEmail());
         }
-
-        Exam saved = examRepository.save(exam);
-
-        // Si l'examen est déjà publié, on envoie les invitations aux nouveaux étudiants
-        if (isPublished) {
-            added.forEach(s -> emailService.sendExamInvitation(
-                s.getStudentEmail(), s.getStudentName(), exam.getTitle(), s.getAccessToken()));
+        for (User u : audienceService.studentsOfLevels(levels)) {
+            add.accept(StudentAudienceService.fullName(u), u.getEmail());
         }
+        return added;
+    }
 
-        return toExamResponse(saved);
+    /** Si l'examen est déjà publié, les nouveaux inscrits reçoivent leur invitation. */
+    private void invite(Exam exam, List<ExamStudent> added) {
+        if (exam.getStatus() != ExamStatus.PUBLISHED) return;
+        added.forEach(s -> emailService.sendExamInvitation(
+            s.getStudentEmail(), s.getStudentName(), exam.getTitle(), s.getAccessToken()));
+    }
+
+    /** Un compte étudiant vient d'être créé : il rejoint les examens non clos qui ciblent son niveau. */
+    @Transactional
+    public void enrollNewStudent(User student) {
+        if (student.getLevel() == null) return;
+        for (Exam exam : examRepository.findAll()) {
+            if (exam.getStatus() == ExamStatus.CLOSED || !StudentAudienceService.inLevels(student, exam.getTargetLevels())) continue;
+            List<ExamStudent> added = enroll(exam, List.of(new StudentListParserService.StudentInfo(
+                StudentAudienceService.fullName(student), student.getEmail())), null);
+            if (added.isEmpty()) continue;
+            examRepository.save(exam);
+            invite(exam, added);
+        }
     }
 
     private Exam getExamForProfessor(Long examId, String professorEmail) {
@@ -248,6 +291,7 @@ public class ExamService {
             .status(exam.getStatus().name())
             .questionCount(exam.getQuestions().size())
             .studentCount(exam.getStudents().size())
+            .targetLevels(StudentAudienceService.levelList(exam.getTargetLevels()))
             .createdAt(exam.getCreatedAt())
             .questions(exam.getQuestions().stream().map(q -> ExamQuestionResponse.builder()
                 .id(q.getId())

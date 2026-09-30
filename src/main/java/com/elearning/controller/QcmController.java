@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -45,13 +46,14 @@ public class QcmController {
     private final com.elearning.service.QcmSubmissionService submissionService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final com.elearning.service.PaperCopyService paperCopyService;
+    private final com.elearning.service.QcmAudienceService audienceService;
 
     // ── DTOs ───────────────────────────────────────────────────────────────
 
     @Data static class ChoiceInput   { String choiceText; Boolean isCorrect; }
     @Data static class QuestionInput { String questionText; Integer points; String questionType; String correctionData; String caseScenario; String expectedAnswer; List<ChoiceInput> choices; }
     @Data static class StudentInput  { String name; String email; String firstName; String lastName; String level; }
-    @Data static class QcmInput     { String title; String description; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; List<QuestionInput> questions; List<StudentInput> students; }
+    @Data static class QcmInput     { String title; String description; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; List<String> targetLevels; List<QuestionInput> questions; List<StudentInput> students; }
 
     @Data static class ChoiceDto    { Long id; String choiceText; Boolean isCorrect; Integer orderIndex; }
     @Data static class QuestionDto  { Long id; String questionText; Integer points; Integer orderIndex; String questionType; String correctionData; String caseScenario; String expectedAnswer; List<ChoiceDto> choices; }
@@ -59,6 +61,7 @@ public class QcmController {
     @Data static class QcmDto {
         Long id; String title; String description; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String status;
         String professorName; int questionCount; int studentCount; String createdAt;
+        List<String> targetLevels;
         List<QuestionDto> questions;
         List<StudentDto> students;
     }
@@ -108,7 +111,8 @@ public class QcmController {
         d.paperCorrectionRequired = Boolean.TRUE.equals(qcm.getPaperCorrectionRequired());
         d.professorName = qcm.getProfessor().getFirstName() + " " + qcm.getProfessor().getLastName();
         d.questionCount = qcm.getQuestions().size();
-        d.studentCount  = qcm.getAssignedStudents().size();
+        d.studentCount  = audienceService.audience(qcm).size();
+        d.targetLevels  = qcm.targetLevelList();
         d.createdAt = qcm.getCreatedAt() != null ? qcm.getCreatedAt().toString() : null;
         if (withQuestions) {
             d.questions = qcm.getQuestions().stream().map(this::toQuestionDto).collect(Collectors.toList());
@@ -237,6 +241,21 @@ public class QcmController {
         return ResponseEntity.ok(toQcmDto(qcm, true));
     }
 
+    // ── Comptes étudiants (ajout manuel et sélection par niveau) ──────────
+    @Data static class StudentAccountDto { Long id; String firstName; String lastName; String email; String level; }
+
+    @GetMapping("/student-accounts")
+    @Transactional(readOnly = true)
+    public ResponseEntity<List<StudentAccountDto>> studentAccounts() {
+        return ResponseEntity.ok(userRepo.findByRoleAndRegistrationStatusOrderByCreatedAtDesc(Role.ROLE_STUDENT, "APPROVED")
+            .stream().map(u -> {
+                StudentAccountDto d = new StudentAccountDto();
+                d.id = u.getId(); d.firstName = u.getFirstName(); d.lastName = u.getLastName();
+                d.email = u.getEmail(); d.level = u.getLevel();
+                return d;
+            }).toList());
+    }
+
     // ── Parse liste étudiants (prévisualisation, rien sauvegardé) ─────────
     @PostMapping("/parse-students")
     public ResponseEntity<?> parseStudents(
@@ -301,6 +320,7 @@ public class QcmController {
             }
         }
         applyStudents(qcm, input.students);
+        qcm.setTargetLevels(com.elearning.service.StudentAudienceService.normalizeLevels(input.targetLevels));
         return ResponseEntity.ok(toQcmDto(qcmRepo.save(qcm), true));
     }
 
@@ -344,6 +364,7 @@ public class QcmController {
             }
         }
         applyStudents(qcm, input.students);
+        qcm.setTargetLevels(com.elearning.service.StudentAudienceService.normalizeLevels(input.targetLevels));
         return ResponseEntity.ok(toQcmDto(qcmRepo.save(qcm), true));
     }
 
@@ -762,7 +783,7 @@ public class QcmController {
                 (a, b) -> Boolean.TRUE.equals(a.getIsSubmitted()) ? a : b));
         List<PassageResultDto> results = new ArrayList<>();
         java.util.Set<String> listedEmails = new java.util.HashSet<>();
-        for (QcmStudent assigned : qcm.getAssignedStudents()) {
+        for (QcmStudent assigned : audienceService.audience(qcm)) {
             String email = assigned.getStudentEmail().toLowerCase();
             listedEmails.add(email);
             QcmPassage passage = passageByEmail.get(email);
@@ -906,8 +927,8 @@ public class QcmController {
 
             int rowIdx = 1;
             java.util.Set<String> written = new java.util.HashSet<>();
-            if (!qcm.getAssignedStudents().isEmpty()) {
-                for (QcmStudent qs : qcm.getAssignedStudents()) {
+            if (!qcm.isOpenToAll()) {
+                for (QcmStudent qs : audienceService.audience(qcm)) {
                     rowIdx = writeReportRow(sheet, rowIdx, qs, qs.getStudentName(), qs.getStudentEmail(),
                         byEmail.get(qs.getStudentEmail().toLowerCase()));
                     written.add(qs.getStudentEmail().toLowerCase());

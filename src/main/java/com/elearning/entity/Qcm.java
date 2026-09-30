@@ -46,7 +46,11 @@ public class Qcm {
     @Builder.Default
     private List<QcmQuestion> questions = new ArrayList<>();
 
-    // Liste d'étudiants assignés. Si vide → visible par tous les étudiants approuvés.
+    // Niveaux ciblés, séparés par des virgules (ex. "L1,L3") : tous les étudiants de ces niveaux,
+    // y compris ceux créés après le devoir, le reçoivent en plus de la liste ci-dessous.
+    private String targetLevels;
+
+    // Liste d'étudiants assignés. Si vide et sans niveau ciblé → visible par tous les étudiants approuvés.
     @OneToMany(mappedBy = "qcm", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<QcmStudent> assignedStudents = new ArrayList<>();
@@ -55,6 +59,16 @@ public class Qcm {
     @Column(nullable = false)
     @Builder.Default
     private String status = "DRAFT";
+
+    /** Niveaux ciblés sous forme de liste (vide si aucun). */
+    public List<String> targetLevelList() {
+        return com.elearning.service.StudentAudienceService.levelList(targetLevels);
+    }
+
+    /** Ouvert à tous les étudiants : ni liste, ni niveau ciblé. */
+    public boolean isOpenToAll() {
+        return assignedStudents.isEmpty() && targetLevelList().isEmpty();
+    }
 
     @CreationTimestamp
     private LocalDateTime createdAt;

@@ -347,6 +347,9 @@ private boolean isMysqlDatabase() {
             ensureMysqlColumn("qcm_questions", "expected_answer", "TEXT");
 
             ensureMysqlColumn("qcms", "paper_correction_required", "BOOLEAN NOT NULL DEFAULT FALSE");
+            ensureMysqlColumn("qcms", "target_levels", "VARCHAR(100)");
+            ensureMysqlColumn("exams", "target_levels", "VARCHAR(100)");
+            ensureMysqlColumn("virtual_classes", "target_levels", "VARCHAR(100)");
             ensureMysqlColumn("qcm_passages", "paper_correction_url", "VARCHAR(255)");
             ensureMysqlColumn("qcm_passages", "paper_correction_filename", "VARCHAR(255)");
             ensureMysqlColumn("qcm_passages", "manual_score", "INTEGER");
@@ -387,6 +390,9 @@ private boolean isMysqlDatabase() {
         jdbcTemplate.execute("ALTER TABLE qcm_questions ADD COLUMN IF NOT EXISTS case_scenario TEXT");
         jdbcTemplate.execute("ALTER TABLE qcm_questions ADD COLUMN IF NOT EXISTS expected_answer TEXT");
         jdbcTemplate.execute("ALTER TABLE qcms ADD COLUMN IF NOT EXISTS paper_correction_required BOOLEAN NOT NULL DEFAULT FALSE");
+        jdbcTemplate.execute("ALTER TABLE qcms ADD COLUMN IF NOT EXISTS target_levels VARCHAR(100)");
+        jdbcTemplate.execute("ALTER TABLE exams ADD COLUMN IF NOT EXISTS target_levels VARCHAR(100)");
+        jdbcTemplate.execute("ALTER TABLE virtual_classes ADD COLUMN IF NOT EXISTS target_levels VARCHAR(100)");
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS paper_correction_url VARCHAR(255)");
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS paper_correction_filename VARCHAR(255)");
         jdbcTemplate.execute("ALTER TABLE qcm_passages ADD COLUMN IF NOT EXISTS manual_score INTEGER");

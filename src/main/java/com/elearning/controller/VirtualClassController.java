@@ -37,18 +37,26 @@ public class VirtualClassController {
     private final CourseRepository courseRepository;
     private final StudentListParserService studentListParserService;
     private final JitsiTokenService jitsiTokenService;
+    private final com.elearning.service.StudentAudienceService audienceService;
+
+    /** Nombre d'étudiants conviés : liste et niveaux ciblés réunis, sans doublon. */
+    private VirtualClassResponse toResponse(VirtualClass vc) {
+        VirtualClassResponse r = toResponse(vc);
+        r.setStudentCount(audienceService.virtualClassAudience(vc).size());
+        return r;
+    }
 
     @GetMapping("/api/virtual-classes")
     @Transactional(readOnly = true)
     public ResponseEntity<List<VirtualClassResponse>> getAll() {
         return ResponseEntity.ok(virtualClassRepository.findAll().stream()
-            .map(VirtualClassResponse::fromEntity).toList());
+            .map(this::toResponse).toList());
     }
 
     @GetMapping("/api/virtual-classes/{id}")
     @Transactional(readOnly = true)
     public ResponseEntity<VirtualClassResponse> getById(@PathVariable Long id) {
-        return ResponseEntity.ok(VirtualClassResponse.fromEntity(
+        return ResponseEntity.ok(toResponse(
             virtualClassRepository.findById(id).orElseThrow()));
     }
 
@@ -63,8 +71,7 @@ public class VirtualClassController {
         boolean teacher = user.getRole() == Role.ROLE_TEACHER;
         boolean host = admin || teacher || (virtualClass.getTeacher() != null
             && virtualClass.getTeacher().getId().equals(user.getId()));
-        boolean assignedStudent = virtualClass.getStudents().stream()
-            .anyMatch(student -> student.getStudentEmail().equalsIgnoreCase(user.getEmail()));
+        boolean assignedStudent = com.elearning.service.StudentAudienceService.isInvited(virtualClass, user);
 
         if (!host && !assignedStudent) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
@@ -99,19 +106,23 @@ public class VirtualClassController {
     @Transactional
     public ResponseEntity<VirtualClassResponse> create(
             @RequestPart("class") VirtualClass data,
-            @RequestPart("studentList") MultipartFile studentListFile,
+            @RequestPart(value = "studentList", required = false) MultipartFile studentListFile,
             @AuthenticationPrincipal UserDetails userDetails) {
-        if (studentListFile == null || studentListFile.isEmpty()) {
-            return ResponseEntity.badRequest().build();
-        }
+        // Étudiants de la liste (comptes existants) et/ou niveaux entiers
         final List<StudentListParserService.StudentInfo> studentInfos;
         try {
-            studentInfos = studentListParserService.parseFile(studentListFile);
+            studentInfos = studentListFile == null || studentListFile.isEmpty()
+                ? List.of() : studentListParserService.parseFile(studentListFile);
+            audienceService.requireStudentAccounts(studentInfos.stream().map(StudentListParserService.StudentInfo::email).toList());
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
             return ResponseEntity.badRequest().build();
         }
-        if (studentInfos.isEmpty()) {
-            return ResponseEntity.badRequest().build();
+        data.setTargetLevels(com.elearning.service.StudentAudienceService.normalizeLevels(
+            com.elearning.service.StudentAudienceService.levelList(data.getTargetLevels())));
+        if (studentInfos.isEmpty() && data.getTargetLevels() == null) {
+            throw new IllegalArgumentException("Choisissez au moins un niveau ou un étudiant.");
         }
         User teacher = userRepository.findByEmail(userDetails.getUsername()).orElseThrow();
         data.setTeacher(teacher);
@@ -129,13 +140,15 @@ public class VirtualClassController {
         } else {
             data.getStudents().clear();
         }
-        studentInfos.forEach(info -> data.getStudents().add(VirtualClassStudent.builder()
-            .virtualClass(data)
-            .studentName(info.name())
-            .studentEmail(info.email())
-            .build()));
+        studentInfos.stream().map(info -> userRepository.findByEmail(info.email().trim().toLowerCase()).orElseThrow())
+            .distinct()
+            .forEach(account -> data.getStudents().add(VirtualClassStudent.builder()
+                .virtualClass(data)
+                .studentName(com.elearning.service.StudentAudienceService.fullName(account))
+                .studentEmail(account.getEmail())
+                .build()));
         VirtualClass saved = virtualClassRepository.save(data);
-        return ResponseEntity.ok(VirtualClassResponse.fromEntity(saved));
+        return ResponseEntity.ok(toResponse(saved));
     }
 
     @PutMapping("/api/teacher/virtual-classes/{id}/status")
@@ -144,7 +157,7 @@ public class VirtualClassController {
             @PathVariable Long id, @RequestParam String status) {
         VirtualClass vc = virtualClassRepository.findById(id).orElseThrow();
         vc.setStatus(status);
-        return ResponseEntity.ok(VirtualClassResponse.fromEntity(virtualClassRepository.save(vc)));
+        return ResponseEntity.ok(toResponse(virtualClassRepository.save(vc)));
     }
 
     @PostMapping("/api/teacher/virtual-classes/{id}/recording")
@@ -158,7 +171,7 @@ public class VirtualClassController {
         vc.setRecordingMimeType(body.getOrDefault("mimeType", "video/webm"));
         vc.setRecordingFilename(body.getOrDefault("filename", "recording.webm"));
         vc.setStatus("COMPLETED");
-        return ResponseEntity.ok(VirtualClassResponse.fromEntity(virtualClassRepository.save(vc)));
+        return ResponseEntity.ok(toResponse(virtualClassRepository.save(vc)));
     }
 
     @DeleteMapping("/api/teacher/virtual-classes/{id}/recording")
@@ -179,7 +192,7 @@ public class VirtualClassController {
         vc.setRecordingMimeType(null);
         vc.setRecordingFilename(null);
         vc.setStatus("COMPLETED");
-        return ResponseEntity.ok(VirtualClassResponse.fromEntity(virtualClassRepository.save(vc)));
+        return ResponseEntity.ok(toResponse(virtualClassRepository.save(vc)));
     }
 
     @DeleteMapping("/api/teacher/virtual-classes/{id}")

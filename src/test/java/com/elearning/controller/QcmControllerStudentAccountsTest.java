@@ -8,14 +8,14 @@ import com.elearning.repository.QcmRepository;
 import com.elearning.repository.UserRepository;
 import com.elearning.service.DocumentTextExtractorService;
 import com.elearning.service.FileStorageService;
+import com.elearning.service.QcmAudienceService;
+import com.elearning.service.StudentAudienceService;
 import com.elearning.service.StudentListParserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.List;
 import java.util.Optional;
@@ -28,7 +28,6 @@ class QcmControllerStudentAccountsTest {
 
     private final QcmRepository qcmRepo = mock(QcmRepository.class);
     private final UserRepository userRepo = mock(UserRepository.class);
-    private final PasswordEncoder encoder = new BCryptPasswordEncoder(4);
     private final Authentication auth = new UsernamePasswordAuthenticationToken("prof@test.com", null, List.of());
     private QcmController controller;
 
@@ -36,9 +35,10 @@ class QcmControllerStudentAccountsTest {
     void setUp() {
         controller = new QcmController(qcmRepo, mock(QcmPassageRepository.class), userRepo,
             mock(StudentListParserService.class), mock(DocumentTextExtractorService.class),
-            mock(FileStorageService.class), encoder, mock(com.elearning.service.QcmSubmissionService.class),
+            mock(FileStorageService.class), mock(com.elearning.service.QcmSubmissionService.class),
             new com.fasterxml.jackson.databind.ObjectMapper(),
-            mock(com.elearning.service.PaperCopyService.class));
+            mock(com.elearning.service.PaperCopyService.class),
+            new QcmAudienceService(new StudentAudienceService(userRepo)));
         User prof = User.builder().email("prof@test.com").firstName("P").lastName("Prof")
             .password("x").role(Role.ROLE_TEACHER).build();
         when(userRepo.findByEmail(any())).thenReturn(Optional.empty());
@@ -46,51 +46,64 @@ class QcmControllerStudentAccountsTest {
         when(qcmRepo.save(any(Qcm.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
-    private QcmController.QcmInput input(String email, String password) {
+    private QcmController.QcmInput input(String email) {
         QcmController.StudentInput s = new QcmController.StudentInput();
-        s.setEmail(email); s.setFirstName("Awa"); s.setLastName("Diop"); s.setLevel("L3"); s.setPassword(password);
+        s.setEmail(email); s.setFirstName("Awa"); s.setLastName("Diop"); s.setLevel("L3");
         QcmController.QcmInput in = new QcmController.QcmInput();
         in.setTitle("Devoir"); in.setStudents(List.of(s));
         return in;
     }
 
     @Test
-    void createsEnabledStudentAccountWithListPassword() {
-        controller.create(input("new@test.com", "Test-Pass-123"), auth);
+    void refusesEmailWithoutStudentAccount() {
+        var response = controller.create(input("inconnu@test.com"), auth);
 
-        ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
-        verify(userRepo).save(saved.capture());
-        User u = saved.getValue();
-        assertEquals("new@test.com", u.getEmail());
-        assertEquals(Role.ROLE_STUDENT, u.getRole());
-        assertTrue(u.isEnabled());
-        assertEquals("APPROVED", u.getRegistrationStatus());
-        assertTrue(encoder.matches("Test-Pass-123", u.getPassword()));
+        assertEquals(400, response.getStatusCode().value());
+        verify(userRepo, never()).save(any());
+        verify(qcmRepo, never()).save(any());
     }
 
     @Test
-    void replacesPasswordOfExistingStudent() {
+    void keepsPasswordOfExistingStudent() {
         User existing = User.builder().email("etudiant.existant@test.com").firstName("Awa").lastName("Diop")
-            .password(encoder.encode("Ancien-Pass-1")).role(Role.ROLE_STUDENT)
+            .password("hash-du-compte").role(Role.ROLE_STUDENT)
             .enabled(true).registrationStatus("APPROVED").build();
         when(userRepo.findByEmail("etudiant.existant@test.com")).thenReturn(Optional.of(existing));
 
-        controller.create(input("etudiant.existant@test.com", "Test-Pass-123"), auth);
+        var response = controller.create(input("etudiant.existant@test.com"), auth);
 
-        assertTrue(encoder.matches("Test-Pass-123", existing.getPassword()));
-        verify(userRepo).save(existing);
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("hash-du-compte", existing.getPassword());
+        verify(userRepo, never()).save(any());
+        ArgumentCaptor<Qcm> saved = ArgumentCaptor.forClass(Qcm.class);
+        verify(qcmRepo).save(saved.capture());
+        assertEquals(1, saved.getValue().getAssignedStudents().size());
+        assertNull(saved.getValue().getAssignedStudents().get(0).getAccessPassword());
     }
 
     @Test
     void refusesTeacherOrAdminEmailInStudentList() {
         User admin = User.builder().email("admin@test.com").firstName("A").lastName("B")
-            .password(encoder.encode("Admin-Pass-1")).role(Role.ROLE_ADMIN).build();
+            .password("hash-admin").role(Role.ROLE_ADMIN).build();
         when(userRepo.findByEmail("admin@test.com")).thenReturn(Optional.of(admin));
 
-        var response = controller.create(input("admin@test.com", "Test-Pass-123"), auth);
+        var response = controller.create(input("admin@test.com"), auth);
 
         assertEquals(400, response.getStatusCode().value());
-        assertTrue(encoder.matches("Admin-Pass-1", admin.getPassword()));
+        assertEquals("hash-admin", admin.getPassword());
         verify(userRepo, never()).save(any());
+    }
+
+    @Test
+    void storesTargetLevelsInCurriculumOrder() {
+        QcmController.QcmInput in = new QcmController.QcmInput();
+        in.setTitle("Devoir"); in.setTargetLevels(List.of("m1", "L1", "X9", "L1"));
+
+        controller.create(in, auth);
+
+        ArgumentCaptor<Qcm> saved = ArgumentCaptor.forClass(Qcm.class);
+        verify(qcmRepo).save(saved.capture());
+        assertEquals("L1,M1", saved.getValue().getTargetLevels());
+        assertFalse(saved.getValue().isOpenToAll());
     }
 }

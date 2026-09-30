@@ -41,6 +41,7 @@ public class VirtualClassAttendanceController {
     private final VirtualClassRepository virtualClassRepository;
     private final VirtualClassAttendanceRepository attendanceRepository;
     private final UserRepository userRepository;
+    private final com.elearning.service.StudentAudienceService audienceService;
 
     // ── Enregistrement des connexions ─────────────────────────────────────
 
@@ -151,11 +152,10 @@ public class VirtualClassAttendanceController {
         // Étudiants inscrits à la séance, puis étudiants connectés hors liste
         Set<String> listed = new HashSet<>();
         List<ParticipantDto> students = new ArrayList<>();
-        for (VirtualClassStudent s : vc.getStudents()) {
-            String email = s.getStudentEmail().toLowerCase();
-            if (!listed.add(email)) continue;
-            students.add(participant(s.getStudentName(), email, true, byEmail.getOrDefault(email, List.of()), start, end, now));
-        }
+        audienceService.virtualClassAudience(vc).forEach((email, name) -> {
+            listed.add(email);
+            students.add(participant(name, email, true, byEmail.getOrDefault(email, List.of()), start, end, now));
+        });
         byEmail.forEach((email, list) -> {
             if (listed.contains(email) || list.get(0).getRole() != Role.ROLE_STUDENT) return;
             students.add(participant(list.get(0).getFullName(), email, false, list, start, end, now));
@@ -298,7 +298,7 @@ public class VirtualClassAttendanceController {
 
     private boolean canJoin(VirtualClass vc, User user) {
         boolean host = user.getRole() == Role.ROLE_ADMIN || user.getRole() == Role.ROLE_TEACHER;
-        boolean assigned = vc.getStudents().stream().anyMatch(s -> s.getStudentEmail().equalsIgnoreCase(user.getEmail()));
+        boolean assigned = com.elearning.service.StudentAudienceService.isInvited(vc, user);
         return host || assigned;
     }
 

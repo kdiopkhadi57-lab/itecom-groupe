@@ -16,6 +16,7 @@ public class ExamResponse {
     private String status;
     private int questionCount;
     private int studentCount;
+    private List<String> targetLevels;
     private LocalDateTime createdAt;
     private List<ExamQuestionResponse> questions;
     private List<ExamStudentResponse> students;

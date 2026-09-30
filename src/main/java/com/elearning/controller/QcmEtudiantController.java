@@ -40,6 +40,7 @@ public class QcmEtudiantController {
     private final QcmSubmissionService submissionService;
     private final CaseGradingService caseGradingService;
     private final PaperCopyService paperCopyService;
+    private final com.elearning.service.QcmAudienceService audienceService;
 
     private static final int DEFAULT_ESTIMATED_DURATION_MINUTES = 30;
 
@@ -84,15 +85,10 @@ public class QcmEtudiantController {
     @Transactional
     public ResponseEntity<List<QcmListDto>> list(Authentication auth) {
         User student = userRepo.findByEmail(auth.getName()).orElseThrow();
-        String studentEmail = student.getEmail().toLowerCase();
         List<QcmListDto> list = qcmRepo.findByStatusOrderByCreatedAtDesc("PUBLISHED")
             .stream()
-            .filter(qcm -> {
-                // Si aucun étudiant assigné → visible par tous
-                if (qcm.getAssignedStudents().isEmpty()) return true;
-                return qcm.getAssignedStudents().stream()
-                    .anyMatch(s -> s.getStudentEmail().equalsIgnoreCase(studentEmail));
-            })
+            // Sans liste ni niveau ciblé → visible par tous
+            .filter(qcm -> audienceService.canAccess(qcm, student))
             .map(qcm -> {
                 QcmListDto d = new QcmListDto();
                 d.id = qcm.getId(); d.title = qcm.getTitle();
@@ -111,9 +107,7 @@ public class QcmEtudiantController {
     }
 
     private java.util.Optional<QcmStudent> findAssignment(Qcm qcm, User student) {
-        return qcm.getAssignedStudents().stream()
-            .filter(s -> s.getStudentEmail().equalsIgnoreCase(student.getEmail()))
-            .findFirst();
+        return audienceService.findAssignment(qcm, student);
     }
 
     // ── Informations avant de commencer (écran d'accueil) ─────────────────
@@ -126,7 +120,7 @@ public class QcmEtudiantController {
         if (!"PUBLISHED".equals(qcm.getStatus()))
             return ResponseEntity.badRequest().body(Map.of("message", "Ce devoir n'est pas disponible."));
         java.util.Optional<QcmStudent> assignment = findAssignment(qcm, student);
-        if (!qcm.getAssignedStudents().isEmpty() && assignment.isEmpty())
+        if (!qcm.isOpenToAll() && assignment.isEmpty())
             return ResponseEntity.status(403).body(Map.of("message", "Vous ne figurez pas sur la liste des étudiants de ce devoir."));
 
         AccesDto dto = new AccesDto();
@@ -163,7 +157,7 @@ public class QcmEtudiantController {
             return ResponseEntity.badRequest().build();
 
         java.util.Optional<QcmStudent> assignment = findAssignment(qcm, student);
-        if (!qcm.getAssignedStudents().isEmpty() && assignment.isEmpty())
+        if (!qcm.isOpenToAll() && assignment.isEmpty())
             return ResponseEntity.status(403).body(Map.of("message", "Vous ne figurez pas sur la liste des étudiants de ce devoir."));
 
         QcmPassage passage = passageRepo.findByQcmAndStudent(qcm, student)

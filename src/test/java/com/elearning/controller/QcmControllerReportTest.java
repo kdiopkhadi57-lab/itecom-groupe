@@ -11,7 +11,6 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 import java.io.ByteArrayInputStream;
 import java.time.LocalDate;
@@ -28,11 +27,13 @@ class QcmControllerReportTest {
     void reportContainsStudentIdentityColumns() throws Exception {
         QcmRepository qcmRepo = mock(QcmRepository.class);
         QcmPassageRepository passageRepo = mock(QcmPassageRepository.class);
-        QcmController controller = new QcmController(qcmRepo, passageRepo, mock(UserRepository.class),
+        UserRepository userRepo = mock(UserRepository.class);
+        QcmController controller = new QcmController(qcmRepo, passageRepo, userRepo,
             mock(StudentListParserService.class), mock(DocumentTextExtractorService.class),
-            mock(FileStorageService.class), new BCryptPasswordEncoder(4), mock(com.elearning.service.QcmSubmissionService.class),
+            mock(FileStorageService.class), mock(com.elearning.service.QcmSubmissionService.class),
             new com.fasterxml.jackson.databind.ObjectMapper(),
-            mock(com.elearning.service.PaperCopyService.class));
+            mock(com.elearning.service.PaperCopyService.class),
+            new com.elearning.service.QcmAudienceService(new com.elearning.service.StudentAudienceService(userRepo)));
 
         Qcm qcm = Qcm.builder().id(1L).title("Devoir test").build();
         qcm.getAssignedStudents().add(QcmStudent.builder().qcm(qcm).studentName("Awa Diop")

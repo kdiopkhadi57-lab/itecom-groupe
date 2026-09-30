@@ -28,6 +28,7 @@ public class AdminDashboardController {
     private final QcmRepository qcmRepository;
     private final QcmPassageRepository passageRepository;
     private final ExamRepository examRepository;
+    private final com.elearning.service.QcmAudienceService audienceService;
 
     @Data static class CourseStats {
         int total; int published; int lessons; int enrolledStudents; int activeStudents;
@@ -177,7 +178,8 @@ public class AdminDashboardController {
         for (Qcm qcm : qcms) {
             String key = "D" + qcm.getId();
             Map<String, String> assignedLevel = new HashMap<>();
-            for (QcmStudent qs : qcm.getAssignedStudents()) {
+            List<QcmStudent> audience = audienceService.audience(qcm);
+            for (QcmStudent qs : audience) {
                 String email = qs.getStudentEmail() == null ? "" : qs.getStudentEmail().toLowerCase();
                 String level = level(qs.getLevel(), levelByEmail.get(email));
                 assignedLevel.put(email, level);
@@ -196,7 +198,7 @@ public class AdminDashboardController {
             }
             grades.addAll(qcmGrades);
             reports.add(report(qcm.getId(), "Devoir", qcm.getTitle(), qcm.getProfessor(), qcm.getStatus(),
-                qcm.getCreatedAt(), Math.max(qcm.getAssignedStudents().size(), qcmGrades.size()), qcmGrades));
+                qcm.getCreatedAt(), Math.max(audience.size(), qcmGrades.size()), qcmGrades));
         }
 
         List<Exam> exams = examRepository.findAll();

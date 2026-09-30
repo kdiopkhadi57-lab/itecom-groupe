@@ -25,6 +25,7 @@ public class AdminUsersController {
     private final UserRepository userRepository;
     private final EmailService emailService;
     private final PasswordEncoder passwordEncoder;
+    private final com.elearning.service.ExamService examService;
 
     @Data
     static class CreateUserInput {
@@ -108,6 +109,8 @@ public class AdminUsersController {
             .enabled(true)
             .registrationStatus("APPROVED")
             .build());
+        // Les examens qui ciblent son niveau l'inscrivent aussitôt (devoirs et classes virtuelles le voient par leur niveau)
+        if (role == Role.ROLE_STUDENT) examService.enrollNewStudent(user);
         String emailError = emailService.sendAccountCreated(email, user.getFirstName(),
             role == Role.ROLE_TEACHER ? "professeur" : "étudiant", password);
         boolean emailSent = emailError == null;

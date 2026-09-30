@@ -24,4 +24,7 @@ public class ExamCreateRequest {
      * doivent être fournis (examFile / correctionFile) pour extraction automatique par l'IA.
      */
     private List<ExamQuestionRequest> questions = new ArrayList<>();
+
+    /** Niveaux ciblés (L1…M2) : leurs étudiants sont inscrits en plus de la liste importée. */
+    private List<String> targetLevels = new ArrayList<>();
 }

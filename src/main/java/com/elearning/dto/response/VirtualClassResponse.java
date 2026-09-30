@@ -28,6 +28,7 @@ public class VirtualClassResponse {
     private String thumbnailData;
     private boolean hasRecording;
     private int studentCount;
+    private java.util.List<String> targetLevels;
 
     public static VirtualClassResponse fromEntity(VirtualClass vc) {
         return VirtualClassResponse.builder()
@@ -46,6 +47,7 @@ public class VirtualClassResponse {
             .thumbnailData(vc.getThumbnailData())
             .hasRecording(vc.getRecordingData() != null && !vc.getRecordingData().isEmpty())
             .studentCount(vc.getStudents() != null ? vc.getStudents().size() : 0)
+            .targetLevels(com.elearning.service.StudentAudienceService.levelList(vc.getTargetLevels()))
             .build();
     }
 }

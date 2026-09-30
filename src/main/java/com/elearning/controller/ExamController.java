@@ -40,7 +40,7 @@ public class ExamController {
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<ExamResponse>> createExam(
             @RequestPart("exam") @Valid ExamCreateRequest request,
-            @RequestPart("studentList") MultipartFile studentListFile,
+            @RequestPart(value = "studentList", required = false) MultipartFile studentListFile,
             @RequestPart(value = "examFile", required = false) MultipartFile examFile,
             @RequestPart(value = "correctionFile", required = false) MultipartFile correctionFile,
             @AuthenticationPrincipal UserDetails user) throws IOException {
@@ -126,6 +126,25 @@ public class ExamController {
             ExamResponse exam = examService.addStudentsToExam(id, file, user.getUsername());
             return ResponseEntity.ok(ApiResponse.success(
                 exam.getStudentCount() + " étudiants ajoutés à l'examen", exam));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest()
+                .body(ApiResponse.error(e.getMessage() != null ? e.getMessage() : "Erreur"));
+        }
+    }
+
+    public record AddStudentsInput(List<String> emails, List<String> levels) {}
+
+    /** Ajout de comptes étudiants et/ou de niveaux entiers à un examen existant. */
+    @PostMapping("/{id}/students")
+    public ResponseEntity<ApiResponse<ExamResponse>> addStudents(
+            @PathVariable Long id,
+            @RequestBody AddStudentsInput input,
+            @AuthenticationPrincipal UserDetails user) {
+        try {
+            int before = examService.getExamById(id, user.getUsername()).getStudentCount();
+            ExamResponse exam = examService.addStudentsToExam(id, input.emails(), input.levels(), user.getUsername());
+            return ResponseEntity.ok(ApiResponse.success(
+                (exam.getStudentCount() - before) + " étudiant(s) ajouté(s) à l'examen", exam));
         } catch (Exception e) {
             return ResponseEntity.badRequest()
                 .body(ApiResponse.error(e.getMessage() != null ? e.getMessage() : "Erreur"));

@@ -19,11 +19,12 @@ import static org.mockito.Mockito.*;
 class AdminUsersControllerTest {
 
     private final UserRepository userRepo = mock(UserRepository.class);
+    private final com.elearning.service.ExamService examService = mock(com.elearning.service.ExamService.class);
     private AdminUsersController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new AdminUsersController(userRepo, mock(EmailService.class), new BCryptPasswordEncoder(4));
+        controller = new AdminUsersController(userRepo, mock(EmailService.class), new BCryptPasswordEncoder(4), examService);
         when(userRepo.findByEmail(any())).thenReturn(Optional.empty());
         when(userRepo.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
     }
@@ -45,6 +46,8 @@ class AdminUsersControllerTest {
         assertEquals("Dakar", saved.getValue().getBirthPlace());
         assertEquals("L3", saved.getValue().getLevel());
         assertNull(saved.getValue().getSubjects());
+        // Les examens ciblant le niveau L3 l'inscrivent aussitôt
+        verify(examService).enrollNewStudent(saved.getValue());
     }
 
     @Test
