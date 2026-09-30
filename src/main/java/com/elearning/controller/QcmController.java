@@ -15,7 +15,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -23,13 +22,11 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -45,7 +42,6 @@ public class QcmController {
     private final StudentListParserService parserService;
     private final DocumentTextExtractorService documentTextExtractorService;
     private final FileStorageService fileStorageService;
-    private final PasswordEncoder passwordEncoder;
     private final com.elearning.service.QcmSubmissionService submissionService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final com.elearning.service.PaperCopyService paperCopyService;
@@ -54,12 +50,12 @@ public class QcmController {
 
     @Data static class ChoiceInput   { String choiceText; Boolean isCorrect; }
     @Data static class QuestionInput { String questionText; Integer points; String questionType; String correctionData; String caseScenario; String expectedAnswer; List<ChoiceInput> choices; }
-    @Data static class StudentInput  { String name; String email; String firstName; String lastName; String level; String password; }
+    @Data static class StudentInput  { String name; String email; String firstName; String lastName; String level; }
     @Data static class QcmInput     { String title; String description; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; List<QuestionInput> questions; List<StudentInput> students; }
 
     @Data static class ChoiceDto    { Long id; String choiceText; Boolean isCorrect; Integer orderIndex; }
     @Data static class QuestionDto  { Long id; String questionText; Integer points; Integer orderIndex; String questionType; String correctionData; String caseScenario; String expectedAnswer; List<ChoiceDto> choices; }
-    @Data static class StudentDto   { Long id; String studentName; String studentEmail; String firstName; String lastName; String level; String password; }
+    @Data static class StudentDto   { Long id; String studentName; String studentEmail; String firstName; String lastName; String level; }
     @Data static class QcmDto {
         Long id; String title; String description; Integer estimatedDurationMinutes; Boolean paperCorrectionRequired; String status;
         String professorName; int questionCount; int studentCount; String createdAt;
@@ -120,7 +116,7 @@ public class QcmController {
                 StudentDto sd = new StudentDto();
                 sd.id = s.getId(); sd.studentName = s.getStudentName(); sd.studentEmail = s.getStudentEmail();
                 sd.firstName = s.getFirstName(); sd.lastName = s.getLastName();
-                sd.level = s.getLevel(); sd.password = s.getAccessPassword();
+                sd.level = s.getLevel();
                 return sd;
             }).collect(Collectors.toList());
         }
@@ -132,60 +128,35 @@ public class QcmController {
             .filter(si -> si.email != null && !si.email.isBlank()).toList();
         validateStudents(valid);
 
-        Set<String> usedPasswords = valid.stream().map(si -> trimToNull(si.password))
-            .filter(Objects::nonNull).collect(Collectors.toCollection(HashSet::new));
         qcm.getAssignedStudents().clear();
         for (StudentInput si : valid) {
-            String password = trimToNull(si.password);
-            if (password == null) password = generateUniquePassword(usedPasswords);
             qcm.getAssignedStudents().add(QcmStudent.builder()
                 .qcm(qcm).studentName(displayName(si))
                 .studentEmail(si.email.trim().toLowerCase())
                 .firstName(trimToNull(si.firstName)).lastName(trimToNull(si.lastName))
-                .level(trimToNull(si.level)).accessPassword(password).build());
+                .level(trimToNull(si.level)).build());
         }
-        syncStudentAccounts(qcm.getAssignedStudents());
+        enableStudentAccounts(qcm.getAssignedStudents());
     }
 
     /**
-     * Le mot de passe de la liste est le mot de passe de connexion de l'étudiant :
-     * on crée le compte s'il n'existe pas, sinon on remplace son mot de passe.
+     * L'étudiant se connecte avec le mot de passe de son compte (généré à sa création, modifiable
+     * depuis son profil) : la liste d'un devoir ne touche jamais au mot de passe. On s'assure
+     * seulement que le compte est actif.
      */
-    private void syncStudentAccounts(List<QcmStudent> students) {
+    private void enableStudentAccounts(List<QcmStudent> students) {
         for (QcmStudent s : students) {
-            String password = s.getAccessPassword();
-            if (password == null || password.isBlank()) continue;
-            User user = userRepo.findByEmail(s.getStudentEmail()).orElse(null);
-            if (user == null) {
-                String firstName = s.getFirstName() != null ? s.getFirstName() : s.getStudentName();
-                String lastName = s.getLastName() != null ? s.getLastName() : "";
-                userRepo.save(User.builder()
-                    .firstName(firstName).lastName(lastName)
-                    .email(s.getStudentEmail())
-                    .password(passwordEncoder.encode(password))
-                    .role(Role.ROLE_STUDENT)
-                    .enabled(true)
-                    .registrationStatus("APPROVED")
-                    .build());
-                continue;
-            }
-            if (user.getRole() != Role.ROLE_STUDENT) continue; // vérifié dans validateStudents
-            boolean changed = false;
-            if (!passwordEncoder.matches(password, user.getPassword())) {
-                user.setPassword(passwordEncoder.encode(password));
-                changed = true;
-            }
-            // Un étudiant inscrit sur la liste d'un devoir doit pouvoir se connecter
-            if (!user.isEnabled() || !"APPROVED".equals(user.getRegistrationStatus())) {
-                user.setEnabled(true);
-                user.setRegistrationStatus("APPROVED");
-                changed = true;
-            }
-            if (changed) userRepo.save(user);
+            userRepo.findByEmail(s.getStudentEmail())
+                .filter(u -> u.getRole() == Role.ROLE_STUDENT)
+                .filter(u -> !u.isEnabled() || !"APPROVED".equals(u.getRegistrationStatus()))
+                .ifPresent(u -> {
+                    u.setEnabled(true);
+                    u.setRegistrationStatus("APPROVED");
+                    userRepo.save(u);
+                });
         }
     }
 
-    /** Refuse les emails ou mots de passe en double : chaque étudiant doit avoir un mot de passe qui lui est propre. */
     /** Problèmes détectés dans la liste des étudiants, avec les emails des lignes concernées. */
     static class StudentListException extends IllegalArgumentException {
         final List<String> invalidEmails;
@@ -196,13 +167,12 @@ public class QcmController {
     }
 
     /**
-     * Refuse les emails en double, les emails de comptes professeur/administrateur et les mots de passe
-     * partagés : chaque étudiant doit avoir un mot de passe qui lui est propre. Tous les problèmes
-     * sont signalés en une seule fois.
+     * Refuse les emails en double, les emails de comptes professeur/administrateur et les emails
+     * sans compte étudiant (le compte, et donc le mot de passe, est créé une seule fois par
+     * l'administrateur). Tous les problèmes sont signalés en une seule fois.
      */
     private void validateStudents(List<StudentInput> students) {
         Set<String> emails = new HashSet<>();
-        Map<String, String> passwordOwners = new HashMap<>();
         List<String> problems = new ArrayList<>();
         Set<String> invalidEmails = new java.util.LinkedHashSet<>();
         for (StudentInput si : students) {
@@ -211,17 +181,13 @@ public class QcmController {
                 problems.add("l'email " + email + " apparaît plusieurs fois");
                 invalidEmails.add(email);
             }
-            userRepo.findByEmail(email).filter(u -> u.getRole() != Role.ROLE_STUDENT).ifPresent(u -> {
-                problems.add(email + " est un compte " + (u.getRole() == Role.ROLE_ADMIN ? "administrateur" : "professeur")
-                    + " (retirez-le de la liste ou utilisez un autre email)");
+            User user = userRepo.findByEmail(email).orElse(null);
+            if (user == null) {
+                problems.add(email + " n'a pas de compte étudiant (créez d'abord le compte depuis la gestion des utilisateurs)");
                 invalidEmails.add(email);
-            });
-            String password = trimToNull(si.password);
-            if (password == null) continue;
-            String owner = passwordOwners.putIfAbsent(password, email);
-            if (owner != null) {
-                problems.add("le même mot de passe est attribué à " + owner + " et à " + email);
-                invalidEmails.add(owner);
+            } else if (user.getRole() != Role.ROLE_STUDENT) {
+                problems.add(email + " est un compte " + (user.getRole() == Role.ROLE_ADMIN ? "administrateur" : "professeur")
+                    + " (retirez-le de la liste ou utilisez un autre email)");
                 invalidEmails.add(email);
             }
         }
@@ -246,20 +212,6 @@ public class QcmController {
 
     private static String trimToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
-    }
-
-    // Sans caractères ambigus (0/O, 1/l/I) pour faciliter la saisie par l'étudiant
-    private static final String PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-    private static final SecureRandom RANDOM = new SecureRandom();
-
-    static String generateUniquePassword(Set<String> usedPasswords) {
-        String password;
-        do {
-            StringBuilder sb = new StringBuilder(8);
-            for (int i = 0; i < 8; i++) sb.append(PASSWORD_ALPHABET.charAt(RANDOM.nextInt(PASSWORD_ALPHABET.length())));
-            password = sb.toString();
-        } while (!usedPasswords.add(password));
-        return password;
     }
 
     // ── Endpoints CRUD ─────────────────────────────────────────────────────
@@ -293,8 +245,6 @@ public class QcmController {
             if (file == null || file.isEmpty())
                 return ResponseEntity.badRequest().body(Map.of("error", "Fichier vide ou manquant"));
             List<StudentListParserService.StudentInfo> list = parserService.parseFile(file);
-            Set<String> usedPasswords = list.stream().map(s -> trimToNull(s.password()))
-                .filter(Objects::nonNull).collect(Collectors.toCollection(HashSet::new));
             List<Map<String, String>> result = new ArrayList<>();
             for (StudentListParserService.StudentInfo s : list) {
                 Map<String, String> row = new HashMap<>();
@@ -303,8 +253,6 @@ public class QcmController {
                 row.put("firstName", s.firstName() != null ? s.firstName() : "");
                 row.put("lastName", s.lastName() != null ? s.lastName() : "");
                 row.put("level", s.level() != null ? s.level() : "");
-                // Mot de passe absent du fichier : on en propose un, que le professeur peut modifier
-                row.put("password", s.password() != null ? s.password() : generateUniquePassword(usedPasswords));
                 result.add(row);
             }
             return ResponseEntity.ok(Map.of("students", result, "count", list.size()));
@@ -485,29 +433,26 @@ public class QcmController {
             Qcm qcm = qcmRepo.findById(id).orElseThrow();
             java.util.Set<String> existing = qcm.getAssignedStudents().stream()
                 .map(QcmStudent::getStudentEmail).collect(Collectors.toSet());
-            Set<String> usedPasswords = qcm.getAssignedStudents().stream().map(QcmStudent::getAccessPassword)
-                .filter(Objects::nonNull).collect(Collectors.toCollection(HashSet::new));
             int added = 0;
             for (StudentListParserService.StudentInfo info : parserService.parseFile(file)) {
-                if (userRepo.findByEmail(info.email()).map(u -> u.getRole() != Role.ROLE_STUDENT).orElse(false)) {
+                User user = userRepo.findByEmail(info.email()).orElse(null);
+                if (user == null) {
+                    throw new IllegalArgumentException("L'email " + info.email()
+                        + " n'a pas de compte étudiant : créez d'abord le compte depuis la gestion des utilisateurs.");
+                }
+                if (user.getRole() != Role.ROLE_STUDENT) {
                     throw new IllegalArgumentException("L'email " + info.email()
                         + " appartient à un compte professeur ou administrateur.");
                 }
                 if (!existing.add(info.email())) continue;
-                String password = trimToNull(info.password());
-                if (password != null && !usedPasswords.add(password)) {
-                    throw new IllegalArgumentException("Le mot de passe « " + password + " » de " + info.name()
-                        + " est déjà attribué à un autre étudiant de ce devoir.");
-                }
-                if (password == null) password = generateUniquePassword(usedPasswords);
                 qcm.getAssignedStudents().add(QcmStudent.builder()
                     .qcm(qcm).studentName(info.name())
                     .studentEmail(info.email())
                     .firstName(info.firstName()).lastName(info.lastName())
-                    .level(info.level()).accessPassword(password).build());
+                    .level(info.level()).build());
                 added++;
             }
-            syncStudentAccounts(qcm.getAssignedStudents());
+            enableStudentAccounts(qcm.getAssignedStudents());
             qcmRepo.save(qcm);
             return ResponseEntity.ok(Map.of("message", added + " étudiant(s) ajouté(s)", "total", qcm.getAssignedStudents().size()));
         } catch (Exception e) {

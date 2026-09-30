@@ -65,8 +65,8 @@ public class ExamController {
             headerStyle.setFillForegroundColor(IndexedColors.CORNFLOWER_BLUE.getIndex());
             headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
 
-            // En-tête : Nom | Prénom | Niveau | Email | Mot de passe (unique pour chaque étudiant)
-            String[] headers = {"Nom", "Prénom", "Niveau", "Email", "Mot de passe"};
+            // En-tête : Nom | Prénom | Niveau | Email (l'étudiant se connecte avec le mot de passe de son compte)
+            String[] headers = {"Nom", "Prénom", "Niveau", "Email"};
             Row header = sheet.createRow(0);
             for (int i = 0; i < headers.length; i++) {
                 Cell cell = header.createCell(i);
@@ -76,9 +76,9 @@ public class ExamController {
 
             // Exemples
             String[][] examples = {
-                {"Ndiaye", "Moussa", "L3", "moussa.ndiaye@etudiant.com", "Mn7xK2pa"},
-                {"Diallo", "Fatou", "L3", "fatou.diallo@etudiant.com", "Fd4qR9tz"},
-                {"Seck", "Ibrahima", "M1", "ibrahima.seck@etudiant.com", "Is8wH3nb"},
+                {"Ndiaye", "Moussa", "L3", "moussa.ndiaye@etudiant.com"},
+                {"Diallo", "Fatou", "L3", "fatou.diallo@etudiant.com"},
+                {"Seck", "Ibrahima", "M1", "ibrahima.seck@etudiant.com"},
             };
             for (int r = 0; r < examples.length; r++) {
                 Row row = sheet.createRow(r + 1);
