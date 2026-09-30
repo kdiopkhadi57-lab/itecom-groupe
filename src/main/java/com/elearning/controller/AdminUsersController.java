@@ -84,9 +84,8 @@ public class AdminUsersController {
             } catch (java.time.format.DateTimeParseException e) {
                 return ResponseEntity.badRequest().body(Map.of("message", "Date de naissance invalide."));
             }
-            java.time.LocalDate today = java.time.LocalDate.now();
-            if (birthDate.isAfter(today.minusYears(10)) || birthDate.isBefore(today.minusYears(100))) {
-                return ResponseEntity.badRequest().body(Map.of("message", "Date de naissance invalide."));
+            if (birthDate.isAfter(java.time.LocalDate.now())) {
+                return ResponseEntity.badRequest().body(Map.of("message", "La date de naissance ne peut pas être dans le futur."));
             }
         } else if (isBlank(input.subjects)) {
             return ResponseEntity.badRequest().body(Map.of("message", "Indiquez au moins une matière enseignée par le professeur."));
