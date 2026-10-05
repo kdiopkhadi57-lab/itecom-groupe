@@ -25,6 +25,7 @@ public class AdminUsersController {
     private final EmailService emailService;
     private final PasswordEncoder passwordEncoder;
     private final com.elearning.service.ExamService examService;
+    private final com.elearning.service.EmailDomainChecker emailDomainChecker;
 
     @Data
     static class CreateUserInput {
@@ -51,9 +52,11 @@ public class AdminUsersController {
         if (isBlank(input.firstName) || isBlank(input.lastName) || isBlank(input.email)) {
             return ResponseEntity.badRequest().body(Map.of("message", "Prénom, nom et email sont obligatoires."));
         }
-        String email = input.email.trim().toLowerCase();
-        if (!email.matches("[^@\\s]+@[^@\\s]+\\.[^@\\s]+")) {
-            return ResponseEntity.badRequest().body(Map.of("message", "Adresse email invalide."));
+        String email;
+        try {
+            email = emailDomainChecker.check(input.email);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
         if (userRepository.findByEmail(email).isPresent()) {
             return ResponseEntity.badRequest().body(Map.of("message", "Un compte existe déjà avec l'email " + email + "."));

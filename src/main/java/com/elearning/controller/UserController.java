@@ -31,7 +31,11 @@ public class UserController {
         if (data.containsKey("firstName")) user.setFirstName(data.get("firstName"));
         if (data.containsKey("lastName")) user.setLastName(data.get("lastName"));
         if (data.containsKey("bio")) user.setBio(data.get("bio"));
-        if (data.containsKey("phone")) user.setPhone(data.get("phone"));
+        if (data.containsKey("phone")) {
+            String phone = data.get("phone");
+            user.setPhone(phone == null || phone.isBlank() ? null
+                : com.elearning.service.ContactValidator.phone(phone, com.elearning.service.ContactValidator.Usage.ANY));
+        }
         return ResponseEntity.ok(userRepository.save(user));
     }
 

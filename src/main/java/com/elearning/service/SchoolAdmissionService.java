@@ -26,7 +26,9 @@ import java.util.*;
 
 /**
  * Inscription d'un nouvel étudiant par la scolarité : création du compte, inscription administrative
- * et pièces du dossier scannées en PDF (bac, et relevés de l'année passée pour un étudiant déjà inscrit ailleurs).
+ * et pièces du dossier scannées en PDF, selon le profil :
+ * nouveau bachelier → attestation et relevé de notes du bac ;
+ * étudiant venant d'un autre établissement → relevés de notes de l'année passée et attestation de réussite.
  */
 @Service
 @RequiredArgsConstructor
@@ -34,7 +36,7 @@ import java.util.*;
 public class SchoolAdmissionService {
 
     public static final String NEW_BACHELOR = "NEW_BACHELOR";
-    public static final String ALREADY_STUDENT = "ALREADY_STUDENT";
+    public static final String TRANSFER = "TRANSFER";
     static final long MAX_PDF_SIZE = 10L * 1024 * 1024;
 
     private final SchoolService schoolService;
@@ -43,6 +45,7 @@ public class SchoolAdmissionService {
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
     private final ExamService examService;
+    private final EmailDomainChecker emailDomainChecker;
 
     @Value("${app.school.documents-dir:school-documents/}")
     private String documentsDir;
@@ -57,14 +60,14 @@ public class SchoolAdmissionService {
 
     @Transactional
     public Admission admit(NewStudent in, MultipartFile bacAttestation, MultipartFile bacTranscript,
-                           List<MultipartFile> previousTranscripts) throws IOException {
+                           List<MultipartFile> previousTranscripts, MultipartFile successAttestation) throws IOException {
         String firstName = required(in.firstName(), "le prénom");
         String lastName = required(in.lastName(), "le nom");
         String birthPlace = required(in.birthPlace(), "le lieu de naissance");
         LocalDate birthDate = parseBirthDate(in.birthDate());
-        String email = required(in.email(), "l'email").toLowerCase(Locale.ROOT);
-        if (!email.matches("[^@\\s]+@[^@\\s]+\\.[^@\\s]+")) throw new IllegalArgumentException("Adresse email invalide.");
-        String profile = ALREADY_STUDENT.equalsIgnoreCase(in.profile()) ? ALREADY_STUDENT : NEW_BACHELOR;
+        String email = emailDomainChecker.check(in.email());
+        String phone = in.phone() == null || in.phone().isBlank() ? null : ContactValidator.phone(in.phone(), ContactValidator.Usage.ANY);
+        String profile = TRANSFER.equalsIgnoreCase(in.profile()) ? TRANSFER : NEW_BACHELOR;
 
         // Un nouvel étudiant ne doit pas déjà exister sur la plateforme
         if (userRepository.findByEmail(email).isPresent()) {
@@ -76,14 +79,19 @@ public class SchoolAdmissionService {
                 + ", existe déjà (compte " + homonyms.get(0).getEmail() + ") : utilisez l'inscription « Tout un niveau » pour les étudiants existants.");
         }
 
+        // Pièces exigées selon le profil ; celles de l'autre profil sont ignorées
         List<MultipartFile> previous = previousTranscripts == null ? List.of()
             : previousTranscripts.stream().filter(f -> f != null && !f.isEmpty()).toList();
-        checkPdf(bacAttestation, "l'attestation du bac");
-        checkPdf(bacTranscript, "le relevé de notes du bac");
-        if (ALREADY_STUDENT.equals(profile) && previous.isEmpty()) {
-            throw new IllegalArgumentException("Pour un étudiant déjà inscrit dans le supérieur, joignez ses relevés de notes de l'année passée (PDF).");
+        if (NEW_BACHELOR.equals(profile)) {
+            checkPdf(bacAttestation, "l'attestation du bac");
+            checkPdf(bacTranscript, "le relevé de notes du bac");
+        } else {
+            if (previous.isEmpty()) {
+                throw new IllegalArgumentException("Joignez les relevés de notes de l'année passée (PDF) de l'établissement d'origine.");
+            }
+            for (MultipartFile f : previous) checkPdf(f, "le relevé « " + f.getOriginalFilename() + " »");
+            checkPdf(successAttestation, "l'attestation de réussite de l'établissement d'origine");
         }
-        for (MultipartFile f : previous) checkPdf(f, "le relevé « " + f.getOriginalFilename() + " »");
 
         String password = PasswordGenerator.generate();
         String level = SchoolService.normalizeLevel(in.level());
@@ -93,7 +101,7 @@ public class SchoolAdmissionService {
             .password(passwordEncoder.encode(password))
             .role(Role.ROLE_STUDENT)
             .birthDate(birthDate).birthPlace(birthPlace)
-            .phone(in.phone() == null || in.phone().isBlank() ? null : in.phone().trim())
+            .phone(phone)
             .specialization(specialization).level(level)
             .enabled(true).registrationStatus("APPROVED")
             .build());
@@ -103,9 +111,13 @@ public class SchoolAdmissionService {
 
         List<Path> written = new ArrayList<>();
         try {
-            store(enrollment, "BAC_ATTESTATION", bacAttestation, written);
-            store(enrollment, "BAC_TRANSCRIPT", bacTranscript, written);
-            for (MultipartFile f : previous) store(enrollment, "PREVIOUS_TRANSCRIPT", f, written);
+            if (NEW_BACHELOR.equals(profile)) {
+                store(enrollment, "BAC_ATTESTATION", bacAttestation, written);
+                store(enrollment, "BAC_TRANSCRIPT", bacTranscript, written);
+            } else {
+                for (MultipartFile f : previous) store(enrollment, "PREVIOUS_TRANSCRIPT", f, written);
+                store(enrollment, "SUCCESS_ATTESTATION", successAttestation, written);
+            }
         } catch (IOException | RuntimeException ex) {
             // La base est annulée : on ne laisse pas de fichiers orphelins
             for (Path p : written) Files.deleteIfExists(p);
@@ -152,6 +164,7 @@ public class SchoolAdmissionService {
             case "BAC_ATTESTATION" -> "Attestation du bac";
             case "BAC_TRANSCRIPT" -> "Relevé de notes du bac";
             case "PREVIOUS_TRANSCRIPT" -> "Relevé de notes de l'année passée";
+            case "SUCCESS_ATTESTATION" -> "Attestation de réussite (établissement d'origine)";
             default -> type;
         };
     }

@@ -24,7 +24,9 @@ class AdminUsersControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new AdminUsersController(userRepo, mock(EmailService.class), new BCryptPasswordEncoder(4), examService);
+        com.elearning.service.EmailDomainChecker domains = new com.elearning.service.EmailDomainChecker();
+        org.springframework.test.util.ReflectionTestUtils.setField(domains, "enabled", false);   // pas d'appel DNS en test
+        controller = new AdminUsersController(userRepo, mock(EmailService.class), new BCryptPasswordEncoder(4), examService, domains);
         when(userRepo.findByEmail(any())).thenReturn(Optional.empty());
         when(userRepo.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
     }

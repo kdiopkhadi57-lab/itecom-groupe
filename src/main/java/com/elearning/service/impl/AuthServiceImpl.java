@@ -31,6 +31,7 @@ public class AuthServiceImpl implements AuthService {
     private final JwtUtils jwtUtils;
     private final AuthenticationManager authenticationManager;
     private final EmailService emailService;
+    private final com.elearning.service.EmailDomainChecker emailDomainChecker;
 
     @Value("${app.admin.email}")
     private String adminEmail;
@@ -38,6 +39,13 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public ApiResponse<String> register(RegisterRequest request) {
+        try {
+            request.setEmail(emailDomainChecker.check(request.getEmail()));
+            request.setPaymentPhone(com.elearning.service.ContactValidator.phone(request.getPaymentPhone(),
+                com.elearning.service.ContactValidator.usageFor(request.getPaymentMethod())));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(e.getMessage());
+        }
         if (userRepository.existsByEmail(request.getEmail())) {
             return ApiResponse.error("Email déjà utilisé");
         }

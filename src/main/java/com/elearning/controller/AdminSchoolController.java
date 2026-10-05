@@ -110,10 +110,11 @@ public class AdminSchoolController {
             @RequestParam(defaultValue = SchoolAdmissionService.NEW_BACHELOR) String profile,
             @RequestParam(required = false) MultipartFile bacAttestation,
             @RequestParam(required = false) MultipartFile bacTranscript,
-            @RequestParam(required = false) List<MultipartFile> previousTranscripts) throws IOException {
+            @RequestParam(required = false) List<MultipartFile> previousTranscripts,
+            @RequestParam(required = false) MultipartFile successAttestation) throws IOException {
         return admissionService.admit(new SchoolAdmissionService.NewStudent(firstName, lastName, birthDate, birthPlace, email,
                 phone, academicYear, level, specialization, discount, profile),
-            bacAttestation, bacTranscript, previousTranscripts);
+            bacAttestation, bacTranscript, previousTranscripts, successAttestation);
     }
 
     @GetMapping("/documents/{id}")

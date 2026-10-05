@@ -115,7 +115,7 @@ class SchoolServiceTest {
         SchoolPayment p = service.submitMobilePayment(student, 3L, 50_000, "wave", "77 123 45 67", "WAVE-TXN-001");
         assertEquals("PENDING", p.getStatus());
         assertEquals("INSCRIPTION", p.getPurpose());
-        assertEquals("771234567", p.getPhone());
+        assertEquals("+221 77 123 45 67", p.getPhone());
         assertNull(p.getReceiptNumber());
         verify(notifications).notifyAdmins(eq("PAIEMENT"), anyString(), contains("WAVE-TXN-001"), anyString());
     }

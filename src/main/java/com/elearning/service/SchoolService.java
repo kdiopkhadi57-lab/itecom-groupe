@@ -375,8 +375,7 @@ public class SchoolService {
         if ("CANCELLED".equals(e.getStatus())) throw new IllegalArgumentException("Cette inscription est annulée.");
         String method = methodInput == null ? "" : methodInput.trim().toUpperCase(Locale.ROOT);
         if (!MOBILE_METHODS.contains(method)) throw new IllegalArgumentException("Choisissez Wave, Orange Money ou Free Money.");
-        String phone = phoneInput == null ? "" : phoneInput.replaceAll("[\\s.-]", "");
-        if (!phone.matches("(\\+?221)?\\d{9}")) throw new IllegalArgumentException("Numéro de téléphone invalide (9 chiffres, ex. 77 123 45 67).");
+        String phone = ContactValidator.phone(phoneInput, ContactValidator.usageFor(method));
         String ref = refInput == null ? "" : refInput.trim();
         if (ref.length() < 4) throw new IllegalArgumentException("Saisissez la référence de transaction reçue par SMS.");
         if (paymentRepository.existsByTransactionRefIgnoreCaseAndStatusNot(ref, "REJECTED")) {

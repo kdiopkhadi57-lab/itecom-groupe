@@ -67,8 +67,15 @@ public class AuthController {
             !"PAYMENT_SUBMITTED".equals(user.getRegistrationStatus())) {
             return ResponseEntity.ok(ApiResponse.error("Statut d'inscription invalide"));
         }
+        String paymentPhone;
+        try {
+            paymentPhone = com.elearning.service.ContactValidator.phone(body.get("paymentPhone"),
+                com.elearning.service.ContactValidator.usageFor(body.get("paymentMethod")));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getMessage()));
+        }
         user.setPaymentMethod(body.get("paymentMethod"));
-        user.setPaymentPhone(body.get("paymentPhone"));
+        user.setPaymentPhone(paymentPhone);
         user.setPaymentReference(body.get("paymentReference"));
         user.setPaymentSubmittedAt(LocalDateTime.now());
         user.setRegistrationStatus("PAYMENT_SUBMITTED");
