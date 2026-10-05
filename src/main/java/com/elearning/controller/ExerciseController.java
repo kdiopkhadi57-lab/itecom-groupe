@@ -25,6 +25,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ExerciseController {
 
+    private final com.elearning.service.VideoOptimizationService videoOptimizer;
+
     private final LessonRepository lessonRepository;
     private final UserRepository userRepository;
     private final ProgressRepository progressRepository;
@@ -121,7 +123,8 @@ public class ExerciseController {
             .title(lesson.getTitle())
             .description(lesson.getDescription())
             .content(lesson.getContent())
-            .videoUrl(lesson.getVideoUrl())
+            .videoUrl(videoOptimizer.bestUrl(lesson.getVideoUrl()))
+            .videoLightUrl(videoOptimizer.lightUrl(lesson.getVideoUrl()))
             .pdfUrl(lesson.getPdfUrl())
             .duration(lesson.getDuration())
             .orderIndex(lesson.getOrderIndex())

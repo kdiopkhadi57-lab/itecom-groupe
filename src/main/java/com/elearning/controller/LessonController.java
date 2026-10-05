@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class LessonController {
 
+    private final com.elearning.service.VideoOptimizationService videoOptimizer;
+
     private final LessonRepository lessonRepository;
     private final CourseRepository courseRepository;
     private final ProgressRepository progressRepository;
@@ -94,7 +96,8 @@ public class LessonController {
             .title(lesson.getTitle())
             .description(lesson.getDescription())
             .content(lesson.getContent())
-            .videoUrl(lesson.getVideoUrl())
+            .videoUrl(videoOptimizer.bestUrl(lesson.getVideoUrl()))
+            .videoLightUrl(videoOptimizer.lightUrl(lesson.getVideoUrl()))
             .pdfUrl(lesson.getPdfUrl())
             .duration(lesson.getDuration())
             .orderIndex(lesson.getOrderIndex())

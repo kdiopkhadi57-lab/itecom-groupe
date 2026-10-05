@@ -16,6 +16,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class CourseController {
 
+    private final com.elearning.service.VideoOptimizationService videoOptimizer;
+
     private final CourseRepository courseRepository;
     private final UserRepository userRepository;
     private final ProgressRepository progressRepository;
@@ -141,7 +143,8 @@ public class CourseController {
         return LessonResponse.builder()
             .id(lesson.getId()).courseId(lesson.getCourse() != null ? lesson.getCourse().getId() : null)
             .title(lesson.getTitle()).description(lesson.getDescription()).content(lesson.getContent())
-            .videoUrl(lesson.getVideoUrl()).pdfUrl(lesson.getPdfUrl())
+            .videoUrl(videoOptimizer.bestUrl(lesson.getVideoUrl()))
+            .videoLightUrl(videoOptimizer.lightUrl(lesson.getVideoUrl())).pdfUrl(lesson.getPdfUrl())
             .duration(lesson.getDuration()).orderIndex(lesson.getOrderIndex())
             .type(lesson.getType()).completed(completed)
             .starterCode(lesson.getStarterCode()).language(lesson.getLanguage())

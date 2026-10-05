@@ -38,11 +38,15 @@ public class VirtualClassController {
     private final StudentListParserService studentListParserService;
     private final JitsiTokenService jitsiTokenService;
     private final com.elearning.service.StudentAudienceService audienceService;
+    private final com.elearning.service.RecordingStorageService recordingStorage;
 
     /** Nombre d'étudiants conviés : liste et niveaux ciblés réunis, sans doublon. */
     private VirtualClassResponse toResponse(VirtualClass vc) {
         VirtualClassResponse r = VirtualClassResponse.fromEntity(vc);
         r.setStudentCount(audienceService.virtualClassAudience(vc).size());
+        r.setHasRecording(recordingStorage.hasRecording(vc));
+        r.setRecordingUrl(recordingStorage.playbackUrl(vc));
+        r.setRecordingLightUrl(recordingStorage.lightUrl(vc));
         return r;
     }
 
@@ -90,6 +94,11 @@ public class VirtualClassController {
     @Transactional(readOnly = true)
     public ResponseEntity<byte[]> getRecording(@PathVariable Long id) {
         VirtualClass vc = virtualClassRepository.findById(id).orElseThrow();
+        // Enregistrement rangé en fichier : lecture en streaming depuis /uploads
+        if (recordingStorage.fileAvailable(vc)) {
+            return ResponseEntity.status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, recordingStorage.playbackUrl(vc)).build();
+        }
         if (vc.getRecordingData() == null || vc.getRecordingData().isEmpty()) {
             return ResponseEntity.notFound().build();
         }
@@ -160,16 +169,15 @@ public class VirtualClassController {
         return ResponseEntity.ok(toResponse(virtualClassRepository.save(vc)));
     }
 
-    @PostMapping("/api/teacher/virtual-classes/{id}/recording")
+    /** Enregistrement envoyé en fichier (multipart) : plus de base64, plus de limite de 45 Mo. */
+    @PostMapping(value = "/api/teacher/virtual-classes/{id}/recording", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Transactional
     public ResponseEntity<VirtualClassResponse> uploadRecording(
             @PathVariable Long id,
-            @RequestBody Map<String, String> body) {
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "thumbnail", required = false) String thumbnailBase64) throws java.io.IOException {
         VirtualClass vc = virtualClassRepository.findById(id).orElseThrow();
-        vc.setRecordingData(body.get("videoBase64"));
-        vc.setThumbnailData(body.get("thumbnailBase64"));
-        vc.setRecordingMimeType(body.getOrDefault("mimeType", "video/webm"));
-        vc.setRecordingFilename(body.getOrDefault("filename", "recording.webm"));
+        recordingStorage.store(vc, file, thumbnailBase64);
         vc.setStatus("COMPLETED");
         return ResponseEntity.ok(toResponse(virtualClassRepository.save(vc)));
     }
@@ -187,10 +195,7 @@ public class VirtualClassController {
         if (!isOwner && !isAdmin) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
-        vc.setRecordingData(null);
-        vc.setThumbnailData(null);
-        vc.setRecordingMimeType(null);
-        vc.setRecordingFilename(null);
+        recordingStorage.delete(vc);
         vc.setStatus("COMPLETED");
         return ResponseEntity.ok(toResponse(virtualClassRepository.save(vc)));
     }
@@ -208,6 +213,7 @@ public class VirtualClassController {
         if (!isOwner && !isAdmin) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
+        recordingStorage.deleteFiles(vc.getRecordingUrl());
         virtualClassRepository.delete(vc);
         return ResponseEntity.ok().build();
     }
@@ -215,6 +221,7 @@ public class VirtualClassController {
     @DeleteMapping("/api/admin/virtual-classes/{id}")
     @Transactional
     public ResponseEntity<Void> adminDeleteClass(@PathVariable Long id) {
+        virtualClassRepository.findById(id).ifPresent(vc -> recordingStorage.deleteFiles(vc.getRecordingUrl()));
         virtualClassRepository.deleteById(id);
         return ResponseEntity.ok().build();
     }

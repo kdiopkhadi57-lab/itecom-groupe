@@ -50,6 +50,27 @@ public class FileStorageService {
         return Files.readAllBytes(path);
     }
 
+    /** Le fichier existe-t-il encore sur le disque ? (un redéploiement sans volume persistant l'efface) */
+    public boolean exists(String url) {
+        if (url == null || !url.startsWith("/uploads/")) return false;
+        Path root = Paths.get(uploadDir).toAbsolutePath().normalize();
+        Path path = root.resolve(url.substring("/uploads/".length())).normalize();
+        return path.startsWith(root) && Files.isRegularFile(path);
+    }
+
+    /** Supprime un fichier stocké par ce service, à partir de son URL publique (/uploads/...). Sans effet s'il n'existe pas. */
+    public void delete(String url) {
+        if (url == null || !url.startsWith("/uploads/")) return;
+        Path root = Paths.get(uploadDir).toAbsolutePath().normalize();
+        Path path = root.resolve(url.substring("/uploads/".length())).normalize();
+        if (!path.startsWith(root)) return;
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            log.warn("Suppression impossible de {} : {}", url, e.getMessage());
+        }
+    }
+
     /** Stores raw bytes (e.g. a generated PDF) under uploadDir/subDirectory and returns the public URL. */
     public String storeBytes(byte[] data, String subDirectory, String extension) throws IOException {
         Path targetDir = Paths.get(uploadDir, subDirectory).toAbsolutePath().normalize();

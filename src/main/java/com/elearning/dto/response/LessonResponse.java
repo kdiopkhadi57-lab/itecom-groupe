@@ -11,7 +11,8 @@ public class LessonResponse {
     private String title;
     private String description;
     private String content;
-    private String videoUrl;
+    private String videoUrl;        // version optimisée si elle existe
+    private String videoLightUrl;   // version légère (connexion faible, hors connexion), null si absente
     private String pdfUrl;
     private Integer duration;
     private Integer orderIndex;

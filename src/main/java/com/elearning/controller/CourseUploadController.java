@@ -21,6 +21,7 @@ public class CourseUploadController {
 
     private final FileStorageService fileStorageService;
     private final WordToPdfConverterService wordToPdfConverterService;
+    private final com.elearning.service.VideoOptimizationService videoOptimizer;
 
     public record UploadedFile(String url, String originalName, String type, long size) {}
 
@@ -50,6 +51,8 @@ public class CourseUploadController {
 
         if (isVideo) {
             String url = fileStorageService.store(file, "courses/videos");
+            // Versions plus légères préparées en arrière-plan ; l'original reste lisible en attendant
+            videoOptimizer.optimizeLater(url);
             return new UploadedFile(url, originalName, "VIDEO", file.getSize());
         }
 

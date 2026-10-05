@@ -21,7 +21,10 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         String location = uploadDir.endsWith("/") ? uploadDir : uploadDir + "/";
+        // Noms de fichiers uniques (UUID) : jamais modifiés, donc mis en cache par le navigateur.
+        // Les requêtes partielles (Range) sont gérées : une vidéo démarre et avance sans être téléchargée en entier.
         registry.addResourceHandler("/uploads/**")
-            .addResourceLocations("file:" + location);
+            .addResourceLocations("file:" + location)
+            .setCacheControl(org.springframework.http.CacheControl.maxAge(java.time.Duration.ofDays(30)).cachePublic());
     }
 }

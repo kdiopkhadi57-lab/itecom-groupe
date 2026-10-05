@@ -6,6 +6,8 @@ COPY src ./src
 RUN mvn package -DskipTests
 
 FROM eclipse-temurin:17-jre-alpine
+# ffmpeg : recompression des vidéos de cours et des enregistrements (versions optimisée et légère)
+RUN apk add --no-cache ffmpeg
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8080

@@ -19,7 +19,8 @@ public class VirtualClassResponse {
     private LocalDateTime scheduledAt;
     private Integer durationMinutes;
     private String roomName;
-    private String recordingUrl;
+    private String recordingUrl;        // adresse de lecture en streaming (version optimisée si prête)
+    private String recordingLightUrl;   // version légère, null si absente
     private String status;
     private String teacherName;
     private Long teacherId;
@@ -45,7 +46,7 @@ public class VirtualClassResponse {
             .courseTitle(vc.getCourse() != null ? vc.getCourse().getTitle() : null)
             .createdAt(vc.getCreatedAt())
             .thumbnailData(vc.getThumbnailData())
-            .hasRecording(vc.getRecordingData() != null && !vc.getRecordingData().isEmpty())
+            .hasRecording(vc.getRecordingUrl() != null || (vc.getRecordingData() != null && !vc.getRecordingData().isEmpty()))
             .studentCount(vc.getStudents() != null ? vc.getStudents().size() : 0)
             .targetLevels(com.elearning.service.StudentAudienceService.levelList(vc.getTargetLevels()))
             .build();

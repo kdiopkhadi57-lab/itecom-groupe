@@ -22,7 +22,8 @@ class VirtualClassControllerTest {
     private final VirtualClassRepository repo = mock(VirtualClassRepository.class);
     private final StudentAudienceService audience = mock(StudentAudienceService.class);
     private final VirtualClassController controller = new VirtualClassController(repo, mock(UserRepository.class),
-        mock(CourseRepository.class), mock(StudentListParserService.class), mock(JitsiTokenService.class), audience);
+        mock(CourseRepository.class), mock(StudentListParserService.class), mock(JitsiTokenService.class), audience,
+        mock(com.elearning.service.RecordingStorageService.class));
 
     /** Ouvrir une séance renvoyait « Une erreur inattendue » : toResponse s'appelait lui-même à l'infini. */
     @Test
