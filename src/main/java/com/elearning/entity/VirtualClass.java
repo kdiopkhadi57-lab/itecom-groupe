@@ -41,4 +41,9 @@ public class VirtualClass {
     @OneToMany(mappedBy = "virtualClass", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<VirtualClassAttendance> attendances = new ArrayList<>();
+
+    /** Appels lancés pendant la séance ; supprimés avec elle. */
+    @OneToMany(mappedBy = "virtualClass", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<VirtualClassRollCall> rollCalls = new ArrayList<>();
 }

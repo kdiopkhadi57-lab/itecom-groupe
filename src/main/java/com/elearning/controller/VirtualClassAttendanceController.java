@@ -42,6 +42,7 @@ public class VirtualClassAttendanceController {
     private final VirtualClassAttendanceRepository attendanceRepository;
     private final UserRepository userRepository;
     private final com.elearning.service.StudentAudienceService audienceService;
+    private final com.elearning.service.VirtualClassRollCallService rollCallService;
 
     // ── Enregistrement des connexions ─────────────────────────────────────
 
@@ -95,6 +96,7 @@ public class VirtualClassAttendanceController {
     @Data static class ParticipantDto {
         String name; String email; boolean enrolled; String status; // PRESENT, ABSENT
         boolean late; boolean leftEarly; boolean online;
+        int rollCallsAnswered;   // appels « Je suis présent » auxquels l'étudiant a répondu
         String firstJoinAt; String lastLeaveAt; long totalSeconds; int connections;
         List<SegmentDto> segments;
     }
@@ -105,7 +107,9 @@ public class VirtualClassAttendanceController {
         double attendanceRate; long averageSeconds;
         ParticipantDto teacher;
         List<ParticipantDto> students;
+        List<RollCallDto> rollCalls;
     }
+    @Data static class RollCallDto { String startedAt; int answered; }
 
     @GetMapping("/api/teacher/virtual-classes/{id}/attendance")
     @Transactional(readOnly = true)
@@ -163,6 +167,20 @@ public class VirtualClassAttendanceController {
         students.sort(Comparator.comparing((ParticipantDto p) -> "ABSENT".equals(p.status))
             .thenComparing(p -> p.name == null ? "" : p.name.toLowerCase()));
         r.students = students;
+
+        // Appels du professeur : qui a répondu à chacun
+        var calls = rollCallService.rollCalls(vc);
+        var answered = rollCallService.answeredEmails(calls);
+        r.rollCalls = new ArrayList<>();
+        for (var c : calls) {
+            RollCallDto d = new RollCallDto();
+            d.startedAt = c.getStartedAt().toString();
+            d.answered = answered.get(c.getId()).size();
+            r.rollCalls.add(d);
+        }
+        for (ParticipantDto p : students) {
+            p.rollCallsAnswered = (int) answered.values().stream().filter(set -> set.contains(p.email.toLowerCase())).count();
+        }
 
         if (vc.getTeacher() != null) {
             String email = vc.getTeacher().getEmail().toLowerCase();
@@ -254,6 +272,8 @@ public class VirtualClassAttendanceController {
                 {"Absents", String.valueOf(r.absentCount)},
                 {"En retard", String.valueOf(r.lateCount)},
                 {"Partis avant la fin", String.valueOf(r.leftEarlyCount)},
+                {"Appels faits", r.rollCalls.isEmpty() ? "Aucun" : r.rollCalls.size() + " (" + String.join(", ",
+                    r.rollCalls.stream().map(c -> fmtTime(c.startedAt).substring(0, 5) + " : " + c.answered + " présent(s)").toList()) + ")"},
                 {"Professeur connecté", r.teacher == null || "ABSENT".equals(r.teacher.status) ? "Non"
                     : "De " + fmtTime(r.teacher.firstJoinAt) + " à " + (r.teacher.online ? "maintenant" : fmtTime(r.teacher.lastLeaveAt))},
             };
@@ -265,7 +285,7 @@ public class VirtualClassAttendanceController {
             row++;
 
             String[] headers = {"Étudiant", "Email", "Inscrit à la séance", "Statut", "Retard", "Parti avant la fin",
-                "Première connexion", "Dernier départ", "Durée connectée (min)", "Connexions", "Détail des connexions"};
+                "Première connexion", "Dernier départ", "Durée connectée (min)", "Connexions", "Détail des connexions", "Appels répondus"};
             Row h = sheet.createRow(row++);
             for (int i = 0; i < headers.length; i++) { Cell c = h.createCell(i); c.setCellValue(headers[i]); c.setCellStyle(header); }
 
@@ -287,6 +307,7 @@ public class VirtualClassAttendanceController {
                     detail.append(fmtTime(s.joinedAt)).append(" → ").append(s.online ? "en ligne" : fmtTime(s.leftAt));
                 }
                 x.createCell(10).setCellValue(detail.toString());
+                x.createCell(11).setCellValue(r.rollCalls.isEmpty() ? "" : p.rollCallsAnswered + " / " + r.rollCalls.size());
             }
             for (int i = 0; i < headers.length; i++) sheet.autoSizeColumn(i);
             wb.write(out);
@@ -296,13 +317,13 @@ public class VirtualClassAttendanceController {
 
     // ── Droits ────────────────────────────────────────────────────────────
 
-    private boolean canJoin(VirtualClass vc, User user) {
+    static boolean canJoin(VirtualClass vc, User user) {
         boolean host = user.getRole() == Role.ROLE_ADMIN || user.getRole() == Role.ROLE_TEACHER;
         boolean assigned = com.elearning.service.StudentAudienceService.isInvited(vc, user);
         return host || assigned;
     }
 
-    private boolean canSeeReport(VirtualClass vc, Authentication auth) {
+    static boolean canSeeReport(VirtualClass vc, Authentication auth) {
         boolean admin = auth.getAuthorities().stream().anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
         boolean owner = vc.getTeacher() != null && vc.getTeacher().getEmail().equalsIgnoreCase(auth.getName());
         return admin || owner;

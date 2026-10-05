@@ -14,7 +14,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Tables du module de scolarité (frais, inscriptions, paiements, notes, attestations, notifications).
+ * Tables du module de scolarité (frais, inscriptions, paiements, notes, attestations, notifications)
+ * et des appels en classe virtuelle.
  * En production Hibernate ne crée pas le schéma (ddl-auto=none) : on le crée ici s'il manque.
  */
 @Component
@@ -84,6 +85,14 @@ public class SchoolSchemaInitializer implements ApplicationRunner {
                 + " enrollment_id BIGINT NOT NULL, type VARCHAR(30) NOT NULL, original_name VARCHAR(255) NOT NULL,"
                 + " stored_name VARCHAR(255) NOT NULL, size BIGINT NOT NULL, uploaded_at " + ts + " NOT NULL,"
                 + " CONSTRAINT fk_school_document_enrollment FOREIGN KEY (enrollment_id) REFERENCES school_enrollments(id) ON DELETE CASCADE)" + engine,
+            // Appels des classes virtuelles (sans clé vers virtual_classes, créée plus tard par DataInitializer)
+            "CREATE TABLE IF NOT EXISTS virtual_class_roll_calls (" + id + ","
+                + " virtual_class_id BIGINT NOT NULL, started_at " + ts + " NOT NULL, expires_at " + ts + " NOT NULL,"
+                + " started_by VARCHAR(255))" + engine,
+            "CREATE TABLE IF NOT EXISTS virtual_class_roll_call_answers (" + id + ","
+                + " roll_call_id BIGINT NOT NULL, email VARCHAR(255) NOT NULL, full_name VARCHAR(255), answered_at " + ts + " NOT NULL,"
+                + " CONSTRAINT uk_roll_call_answer UNIQUE (roll_call_id, email),"
+                + " CONSTRAINT fk_roll_call_answer FOREIGN KEY (roll_call_id) REFERENCES virtual_class_roll_calls(id) ON DELETE CASCADE)" + engine,
             "CREATE TABLE IF NOT EXISTS notifications (" + id + ","
                 + " user_id BIGINT NOT NULL, title VARCHAR(255) NOT NULL, message VARCHAR(1000) NOT NULL, link VARCHAR(255),"
                 + " category VARCHAR(20) NOT NULL DEFAULT 'INFO', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at " + ts + ","
