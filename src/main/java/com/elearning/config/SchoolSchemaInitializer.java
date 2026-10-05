@@ -80,6 +80,10 @@ public class SchoolSchemaInitializer implements ApplicationRunner {
                 + " CONSTRAINT uk_school_certificate_code UNIQUE (verification_code),"
                 + " CONSTRAINT uk_school_certificate_ref UNIQUE (reference),"
                 + " CONSTRAINT fk_school_certificate_enrollment FOREIGN KEY (enrollment_id) REFERENCES school_enrollments(id) ON DELETE CASCADE)" + engine,
+            "CREATE TABLE IF NOT EXISTS school_documents (" + id + ","
+                + " enrollment_id BIGINT NOT NULL, type VARCHAR(30) NOT NULL, original_name VARCHAR(255) NOT NULL,"
+                + " stored_name VARCHAR(255) NOT NULL, size BIGINT NOT NULL, uploaded_at " + ts + " NOT NULL,"
+                + " CONSTRAINT fk_school_document_enrollment FOREIGN KEY (enrollment_id) REFERENCES school_enrollments(id) ON DELETE CASCADE)" + engine,
             "CREATE TABLE IF NOT EXISTS notifications (" + id + ","
                 + " user_id BIGINT NOT NULL, title VARCHAR(255) NOT NULL, message VARCHAR(1000) NOT NULL, link VARCHAR(255),"
                 + " category VARCHAR(20) NOT NULL DEFAULT 'INFO', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at " + ts + ","

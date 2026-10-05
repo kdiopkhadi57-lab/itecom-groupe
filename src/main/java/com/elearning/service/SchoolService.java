@@ -273,10 +273,19 @@ public class SchoolService {
     @Transactional
     public void deleteEnrollment(Long id) {
         SchoolEnrollment e = getEnrollment(id);
+        assertDeletable(e);
+        gradeRepository.deleteByEnrollment(e);
+        enrollmentRepository.delete(e);
+    }
+
+    /** Une inscription qui a des paiements ou des attestations se passe au statut « Annulée », sans être supprimée. */
+    public void assertDeletable(SchoolEnrollment e) {
         if (paymentRepository.existsByEnrollment(e)) {
             throw new IllegalArgumentException("Cette inscription a des paiements : passez-la plutôt au statut « Annulée ».");
         }
-        enrollmentRepository.delete(e);
+        if (!certificateRepository.findByEnrollmentOrderByIssuedAtDesc(e).isEmpty()) {
+            throw new IllegalArgumentException("Cette inscription a des attestations délivrées : passez-la plutôt au statut « Annulée ».");
+        }
     }
 
     private String nextMatricule(String year, String level) {

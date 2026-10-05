@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface SchoolGradeRepository extends JpaRepository<SchoolGrade, Long> {
+    void deleteByEnrollment(SchoolEnrollment enrollment);
     List<SchoolGrade> findByEnrollmentOrderBySemesterAscSubjectAsc(SchoolEnrollment enrollment);
     List<SchoolGrade> findByEnrollmentAndPublishedTrueOrderBySemesterAscSubjectAsc(SchoolEnrollment enrollment);
     Optional<SchoolGrade> findByEnrollmentAndSemesterAndSubjectAndSession(SchoolEnrollment enrollment, String semester,

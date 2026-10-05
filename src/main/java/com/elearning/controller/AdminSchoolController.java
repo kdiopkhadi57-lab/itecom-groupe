@@ -1,11 +1,12 @@
 package com.elearning.controller;
 
-import com.elearning.entity.Role;
 import com.elearning.entity.SchoolCertificate;
+import com.elearning.entity.SchoolDocument;
 import com.elearning.entity.SchoolEnrollment;
 import com.elearning.entity.SchoolFee;
 import com.elearning.entity.SchoolPayment;
 import com.elearning.repository.UserRepository;
+import com.elearning.service.SchoolAdmissionService;
 import com.elearning.service.SchoolPdfService;
 import com.elearning.service.SchoolService;
 import lombok.Data;
@@ -16,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.time.LocalDate;
@@ -29,6 +31,7 @@ public class AdminSchoolController {
 
     private final SchoolService schoolService;
     private final SchoolPdfService pdfService;
+    private final SchoolAdmissionService admissionService;
     private final UserRepository userRepository;
 
     private String adminName(UserDetails principal) {
@@ -70,32 +73,11 @@ public class AdminSchoolController {
     // ── Inscriptions ──
     @Data
     public static class EnrollInput {
-        private Long studentId;
         private String academicYear;
         private String level;
-        private String specialization;
         private Long discount;
-        private Long registrationFee;
-        private Long tuitionFee;
         private String status;
         private Integer installments;
-    }
-
-    /** Étudiants validés, pour choisir qui inscrire. */
-    @GetMapping("/students")
-    public List<Map<String, Object>> students() {
-        return userRepository.findByRoleAndRegistrationStatusOrderByCreatedAtDesc(Role.ROLE_STUDENT, "APPROVED").stream()
-            .map(u -> {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("id", u.getId());
-                m.put("name", u.getLastName() + " " + u.getFirstName());
-                m.put("email", u.getEmail());
-                m.put("level", u.getLevel());
-                m.put("specialization", u.getSpecialization());
-                return m;
-            })
-            .sorted(Comparator.comparing(m -> ((String) m.get("name")).toLowerCase(Locale.ROOT)))
-            .toList();
     }
 
     @GetMapping("/enrollments")
@@ -113,14 +95,31 @@ public class AdminSchoolController {
         r.put("payments", schoolService.paymentsOf(e));
         r.put("transcript", schoolService.transcript(e, false));
         r.put("certificates", schoolService.certificatesOf(e));
+        r.put("documents", admissionService.documents(e));
         return r;
     }
 
-    @PostMapping("/enrollments")
-    public SchoolService.EnrollmentView enroll(@RequestBody EnrollInput in) {
-        if (in.getStudentId() == null) throw new IllegalArgumentException("Choisissez un étudiant.");
-        return schoolService.view(schoolService.enroll(in.getStudentId(), in.getAcademicYear(), in.getLevel(),
-            in.getSpecialization(), in.getDiscount(), in.getRegistrationFee(), in.getTuitionFee()));
+    /** Nouvel étudiant : compte, inscription et pièces scannées en PDF (formulaire multipart). */
+    @PostMapping(value = "/enrollments/new", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public SchoolAdmissionService.Admission admit(
+            @RequestParam String firstName, @RequestParam String lastName,
+            @RequestParam String birthDate, @RequestParam String birthPlace,
+            @RequestParam String email, @RequestParam(required = false) String phone,
+            @RequestParam String academicYear, @RequestParam String level,
+            @RequestParam(required = false) String specialization, @RequestParam(required = false) Long discount,
+            @RequestParam(defaultValue = SchoolAdmissionService.NEW_BACHELOR) String profile,
+            @RequestParam(required = false) MultipartFile bacAttestation,
+            @RequestParam(required = false) MultipartFile bacTranscript,
+            @RequestParam(required = false) List<MultipartFile> previousTranscripts) throws IOException {
+        return admissionService.admit(new SchoolAdmissionService.NewStudent(firstName, lastName, birthDate, birthPlace, email,
+                phone, academicYear, level, specialization, discount, profile),
+            bacAttestation, bacTranscript, previousTranscripts);
+    }
+
+    @GetMapping("/documents/{id}")
+    public ResponseEntity<byte[]> document(@PathVariable Long id) throws IOException {
+        SchoolDocument d = admissionService.getDocument(id);
+        return pdf(admissionService.read(d), d.getOriginalName().replaceAll("(?i)\\.pdf$", ""));
     }
 
     @PostMapping("/enrollments/level")
@@ -134,8 +133,8 @@ public class AdminSchoolController {
     }
 
     @DeleteMapping("/enrollments/{id}")
-    public ResponseEntity<Void> deleteEnrollment(@PathVariable Long id) {
-        schoolService.deleteEnrollment(id);
+    public ResponseEntity<Void> deleteEnrollment(@PathVariable Long id) throws IOException {
+        admissionService.deleteEnrollment(id);
         return ResponseEntity.noContent().build();
     }
 
@@ -265,7 +264,8 @@ public class AdminSchoolController {
 
     static ResponseEntity<byte[]> pdf(byte[] bytes, String name) {
         return ResponseEntity.ok()
-            .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + name + ".pdf\"")
+            .header(HttpHeaders.CONTENT_DISPOSITION, org.springframework.http.ContentDisposition.inline()
+                .filename(name + ".pdf", java.nio.charset.StandardCharsets.UTF_8).build().toString())
             .contentType(MediaType.APPLICATION_PDF)
             .body(bytes);
     }

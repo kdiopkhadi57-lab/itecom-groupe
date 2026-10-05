@@ -11,7 +11,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -40,16 +39,6 @@ public class AdminUsersController {
     }
 
     static final List<String> LEVELS = List.of("L1", "L2", "L3", "M1", "M2");
-
-    // Sans caractères ambigus (0/O, 1/l/I) pour faciliter la saisie
-    private static final String PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-    private static final SecureRandom RANDOM = new SecureRandom();
-
-    private static String generatePassword() {
-        StringBuilder sb = new StringBuilder(10);
-        for (int i = 0; i < 10; i++) sb.append(PASSWORD_ALPHABET.charAt(RANDOM.nextInt(PASSWORD_ALPHABET.length())));
-        return sb.toString();
-    }
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
@@ -90,7 +79,7 @@ public class AdminUsersController {
         } else if (isBlank(input.subjects)) {
             return ResponseEntity.badRequest().body(Map.of("message", "Indiquez au moins une matière enseignée par le professeur."));
         }
-        String password = isBlank(input.password) ? generatePassword() : input.password.trim();
+        String password = isBlank(input.password) ? com.elearning.service.PasswordGenerator.generate() : input.password.trim();
         if (password.length() < 6) {
             return ResponseEntity.badRequest().body(Map.of("message", "Le mot de passe doit contenir au moins 6 caractères."));
         }

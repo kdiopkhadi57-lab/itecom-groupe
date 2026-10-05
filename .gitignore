@@ -7,3 +7,6 @@ target/
 # Fichiers envoyés dans l'application (copies d'étudiants, sujets, corrections,
 # enregistrements, livres) : données des utilisateurs, jamais versionnées
 uploads/
+
+# Pièces des dossiers d'inscription (bac, relevés scannés) : données personnelles
+school-documents/
