@@ -42,6 +42,12 @@ public class AuthController {
         return ResponseEntity.ok(authService.login(request));
     }
 
+    /** Renouvelle la session avec le jeton de rafraîchissement (au retour de la connexion). */
+    @PostMapping("/refresh")
+    public ResponseEntity<AuthResponse> refresh(@RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(authService.refresh(body.get("refreshToken")));
+    }
+
     @GetMapping("/verify-email")
     public ResponseEntity<ApiResponse<String>> verifyEmail(@RequestParam String token) {
         return ResponseEntity.ok(authService.verifyEmail(token));

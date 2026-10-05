@@ -80,6 +80,22 @@ public class AuthServiceImpl implements AuthService {
         User user = userRepository.findByEmail(request.getEmail())
             .orElseThrow(() -> new RuntimeException("Utilisateur non trouvé"));
 
+        return session(user);
+    }
+
+    @Override
+    @Transactional
+    public AuthResponse refresh(String refreshToken) {
+        String email = refreshToken == null ? null : jwtUtils.getEmailFromRefreshToken(refreshToken);
+        User user = email == null ? null : userRepository.findByEmail(email).orElse(null);
+        if (user == null || !user.isEnabled()) {
+            throw new org.springframework.security.authentication.BadCredentialsException("Session expirée : veuillez vous reconnecter.");
+        }
+        return session(user);
+    }
+
+    /** Jetons et profil renvoyés à la connexion ; refusé si le compte est bloqué. */
+    private AuthResponse session(User user) {
         if (user.getBlockedUntil() != null) {
             if (user.getBlockedUntil().isAfter(LocalDateTime.now())) {
                 throw new AccountBlockedException(user.getBlockedUntil());
