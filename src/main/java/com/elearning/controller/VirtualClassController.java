@@ -41,7 +41,7 @@ public class VirtualClassController {
 
     /** Nombre d'étudiants conviés : liste et niveaux ciblés réunis, sans doublon. */
     private VirtualClassResponse toResponse(VirtualClass vc) {
-        VirtualClassResponse r = toResponse(vc);
+        VirtualClassResponse r = VirtualClassResponse.fromEntity(vc);
         r.setStudentCount(audienceService.virtualClassAudience(vc).size());
         return r;
     }
