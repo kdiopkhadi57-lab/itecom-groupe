@@ -103,6 +103,19 @@ class SchoolServiceTest {
     }
 
     @Test
+    void feeIsRegistrationPlusMonthlyAmountOverTheYear() {
+        when(feeRepo.findByAcademicYearAndLevel("2026-2027", "L1")).thenReturn(List.of());
+        when(feeRepo.save(any(SchoolFee.class))).thenAnswer(inv -> { SchoolFee f = inv.getArgument(0); f.setId(1L); return f; });
+        SchoolService.FeeView f = service.saveFee("2026-2027", "l1", 50_000L, 40_000L);
+        assertEquals(50_000, f.registrationFee());
+        assertEquals(40_000, f.monthlyFee());
+        assertEquals(9, f.months());
+        assertEquals(410_000, f.annualTotal());
+        assertThrows(IllegalArgumentException.class, () -> service.saveFee("2026-2027", "L1", 50_000L, null));
+        assertThrows(IllegalArgumentException.class, () -> service.saveFee("2026-2027", "L1", -1L, 40_000L));
+    }
+
+    @Test
     void amountsUsePlainSpaces() {
         assertEquals("1 250 000 FCFA", SchoolService.formatAmount(1_250_000));
         assertEquals("500 FCFA", SchoolService.formatAmount(500));

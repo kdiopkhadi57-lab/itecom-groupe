@@ -3,7 +3,6 @@ package com.elearning.controller;
 import com.elearning.entity.SchoolCertificate;
 import com.elearning.entity.SchoolDocument;
 import com.elearning.entity.SchoolEnrollment;
-import com.elearning.entity.SchoolFee;
 import com.elearning.entity.SchoolPayment;
 import com.elearning.repository.UserRepository;
 import com.elearning.service.SchoolAdmissionService;
@@ -55,14 +54,24 @@ public class AdminSchoolController {
     }
 
     // ── Frais ──
+    @Data
+    public static class FeeInput {
+        private String academicYear;
+        private String level;
+        private Long registrationFee;
+        private Long monthlyFee;
+    }
+
     @GetMapping("/fees")
-    public List<SchoolFee> fees() { return schoolService.listFees(); }
+    public Map<String, Object> fees(@RequestParam(required = false) String year) {
+        return Map.of("months", schoolService.months(), "fees", schoolService.listFees(year));
+    }
 
-    @PostMapping("/fees")
-    public SchoolFee createFee(@RequestBody SchoolFee fee) { return schoolService.saveFee(null, fee); }
-
-    @PutMapping("/fees/{id}")
-    public SchoolFee updateFee(@PathVariable Long id, @RequestBody SchoolFee fee) { return schoolService.saveFee(id, fee); }
+    /** Montant de l'inscription et mensualité d'un niveau (créé ou remplacé). */
+    @PutMapping("/fees")
+    public SchoolService.FeeView saveFee(@RequestBody FeeInput in) {
+        return schoolService.saveFee(in.getAcademicYear(), in.getLevel(), in.getRegistrationFee(), in.getMonthlyFee());
+    }
 
     @DeleteMapping("/fees/{id}")
     public ResponseEntity<Void> deleteFee(@PathVariable Long id) {

@@ -46,6 +46,10 @@ public class SchoolService {
     @Value("${app.frontend.url}")
     private String frontendUrl;
 
+    /** Nombre de mensualités dans l'année universitaire (octobre → juin par défaut). */
+    @Value("${app.school.months:9}")
+    private int months = 9;
+
     // ── Vues renvoyées au frontend ─────────────────────────────────────────────
 
     public record EnrollmentView(Long id, Long studentId, String studentName, String email, String phone,
@@ -125,34 +129,47 @@ public class SchoolService {
 
     // ── Barème des frais ───────────────────────────────────────────────────────
 
-    public List<SchoolFee> listFees() {
-        return feeRepository.findAllByOrderByAcademicYearDescLevelAsc();
+    /** Montants d'un niveau pour une année : frais d'inscription et mensualité (payée chaque mois d'octobre à la fin de l'année). */
+    public record FeeView(Long id, String academicYear, String level, long registrationFee, long monthlyFee, int months,
+                          long annualTotal) {}
+
+    public FeeView feeView(SchoolFee f) {
+        int n = Math.max(1, f.getInstallments());
+        long monthly = f.getTuitionFee() / n;
+        return new FeeView(f.getId(), f.getAcademicYear(), f.getLevel(), f.getRegistrationFee(), monthly, n,
+            f.getRegistrationFee() + f.getTuitionFee());
     }
 
+    public List<FeeView> listFees(String year) {
+        return feeRepository.findAllByOrderByAcademicYearDescLevelAsc().stream()
+            .filter(f -> f.getSpecialization() == null)
+            .filter(f -> year == null || year.isBlank() || year.equals(f.getAcademicYear()))
+            .map(this::feeView).toList();
+    }
+
+    public int months() {
+        return months;
+    }
+
+    /** Enregistre (ou remplace) le montant de l'inscription et la mensualité d'un niveau pour une année. */
     @Transactional
-    public SchoolFee saveFee(Long id, SchoolFee input) {
-        SchoolFee fee = id == null ? new SchoolFee()
-            : feeRepository.findById(id).orElseThrow(() -> new IllegalArgumentException("Barème introuvable."));
-        String year = normalizeYear(input.getAcademicYear());
-        String level = normalizeLevel(input.getLevel());
-        String spec = blankToNull(input.getSpecialization());
-        if (input.getRegistrationFee() < 0 || input.getTuitionFee() < 0) {
-            throw new IllegalArgumentException("Les montants ne peuvent pas être négatifs.");
+    public FeeView saveFee(String yearInput, String levelInput, Long registrationFee, Long monthlyFee) {
+        String year = normalizeYear(yearInput);
+        String level = normalizeLevel(levelInput);
+        if (registrationFee == null || monthlyFee == null) {
+            throw new IllegalArgumentException("Indiquez le montant de l'inscription et celui de la mensualité.");
         }
-        if (input.getInstallments() < 1 || input.getInstallments() > 12) {
-            throw new IllegalArgumentException("Le nombre de mensualités doit être compris entre 1 et 12.");
-        }
-        boolean duplicate = feeRepository.findByAcademicYearAndLevel(year, level).stream()
-            .anyMatch(f -> !f.getId().equals(id) && Objects.equals(f.getSpecialization(), spec));
-        if (duplicate) throw new IllegalArgumentException("Un barème existe déjà pour " + level + " " + year
-            + (spec == null ? " (toutes filières)." : " (" + spec + ")."));
+        if (registrationFee < 0 || monthlyFee < 0) throw new IllegalArgumentException("Les montants ne peuvent pas être négatifs.");
+        if (registrationFee > 10_000_000 || monthlyFee > 10_000_000) throw new IllegalArgumentException("Montant trop élevé.");
+        SchoolFee fee = feeRepository.findByAcademicYearAndLevel(year, level).stream()
+            .filter(f -> f.getSpecialization() == null).findFirst().orElseGet(SchoolFee::new);
         fee.setAcademicYear(year);
         fee.setLevel(level);
-        fee.setSpecialization(spec);
-        fee.setRegistrationFee(input.getRegistrationFee());
-        fee.setTuitionFee(input.getTuitionFee());
-        fee.setInstallments(input.getInstallments());
-        return feeRepository.save(fee);
+        fee.setSpecialization(null);
+        fee.setRegistrationFee(registrationFee);
+        fee.setInstallments(months);
+        fee.setTuitionFee(monthlyFee * months);
+        return feeView(feeRepository.save(fee));
     }
 
     @Transactional
@@ -197,8 +214,8 @@ public class SchoolService {
             : fee.map(SchoolFee::getRegistrationFee).orElse(-1L);
         long tuitionFee = tuitionFeeOverride != null ? tuitionFeeOverride : fee.map(SchoolFee::getTuitionFee).orElse(-1L);
         if (registrationFee < 0 || tuitionFee < 0) {
-            throw new IllegalArgumentException("Aucun barème de frais pour " + level + " " + year
-                + " : créez-le dans l'onglet « Frais » ou saisissez les montants.");
+            throw new IllegalArgumentException("Aucun montant défini pour " + level + " " + year
+                + " : renseignez l'inscription et la mensualité dans la page « Paiements ».");
         }
         long reduction = discount == null ? 0 : discount;
         if (reduction < 0 || reduction > tuitionFee) {
@@ -395,7 +412,7 @@ public class SchoolService {
         notificationService.notifyAdmins("PAIEMENT", "Paiement à vérifier",
             student.getFirstName() + " " + student.getLastName() + " (" + e.getMatricule() + ") a déclaré "
                 + formatAmount(amount) + " par " + methodLabel(method) + ", réf. " + ref + ".",
-            "/admin/scolarite?tab=payments");
+            "/admin/paiements");
         return p;
     }
 
