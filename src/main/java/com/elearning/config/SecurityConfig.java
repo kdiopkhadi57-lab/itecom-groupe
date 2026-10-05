@@ -41,7 +41,7 @@ public class SecurityConfig {
                 // Reprise d'une réponse asynchrone (lecture de copie) : la requête d'origine a déjà été autorisée
                 .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC).permitAll()
                 .requestMatchers("/api/auth/**", "/api/courses/public/**", "/api-docs/**", "/swagger-ui/**",
-                                 "/api/exam/access/**", "/uploads/**", "/api/lookup/**").permitAll()
+                                 "/api/exam/access/**", "/uploads/**", "/api/lookup/**", "/api/public/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/teacher/**").hasAnyRole("TEACHER", "ADMIN")
                 .anyRequest().authenticated()

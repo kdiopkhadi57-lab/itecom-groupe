@@ -144,6 +144,23 @@ public class EmailService {
         return trySendEmail(to, "🎓 Vos identifiants ITECOM", content);
     }
 
+    /** Email d'une notification de la plateforme (scolarité, paiements, notes, attestations). Envoyé en arrière-plan. */
+    @org.springframework.scheduling.annotation.Async
+    public void sendNotification(String to, String firstName, String title, String message, String link) {
+        String url = link != null && link.startsWith("/") ? frontendUrlForAdmin + link : null;
+        String content = "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto'>" +
+            "<div style='background:#1d6ff2;padding:24px;text-align:center'>" +
+            "<h1 style='color:white;margin:0;font-size:20px'>" + escape(title) + "</h1></div>" +
+            "<div style='padding:30px;background:#f9f9f9'>" +
+            "<p>Bonjour " + escape(firstName) + ",</p>" +
+            "<p style='white-space:pre-line'>" + escape(message) + "</p>" +
+            (url != null ? "<div style='text-align:center;margin:24px 0'>" +
+                "<a href='" + url + "' style='background:#1d6ff2;color:white;padding:12px 24px;text-decoration:none;border-radius:8px'>Ouvrir sur ITECOM</a></div>" : "") +
+            "<p style='color:#6b7280;font-size:13px'>Service de la scolarité — ITECOM</p>" +
+            "</div></div>";
+        sendEmail(to, title, content);
+    }
+
     private static String escape(String value) {
         if (value == null) return "";
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
