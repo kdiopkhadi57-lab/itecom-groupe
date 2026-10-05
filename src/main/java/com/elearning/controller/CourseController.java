@@ -138,8 +138,8 @@ public class CourseController {
     }
 
     private LessonResponse toLessonResponse(Lesson lesson, User user) {
-        boolean completed = user != null && progressRepository.findByUserAndLesson(user, lesson)
-            .map(Progress::isCompleted).orElse(false);
+        Progress progress = user == null ? null : progressRepository.findByUserAndLesson(user, lesson).orElse(null);
+        boolean completed = progress != null && progress.isCompleted();
         return LessonResponse.builder()
             .id(lesson.getId()).courseId(lesson.getCourse() != null ? lesson.getCourse().getId() : null)
             .title(lesson.getTitle()).description(lesson.getDescription()).content(lesson.getContent())
@@ -147,6 +147,8 @@ public class CourseController {
             .videoLightUrl(videoOptimizer.lightUrl(lesson.getVideoUrl())).pdfUrl(lesson.getPdfUrl())
             .duration(lesson.getDuration()).orderIndex(lesson.getOrderIndex())
             .type(lesson.getType()).completed(completed)
+            .progressPercentage(com.elearning.service.LessonProgressService.lessonPercent(progress))
+            .videoPosition(progress != null ? progress.getVideoPosition() : null)
             .starterCode(lesson.getStarterCode()).language(lesson.getLanguage())
             .exercise(lesson.isExercise())
             .build();

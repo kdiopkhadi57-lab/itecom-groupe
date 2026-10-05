@@ -18,7 +18,8 @@ public class LessonResponse {
     private Integer orderIndex;
     private Lesson.LessonType type;
     private boolean completed; // for current user
-    private Double progressPercentage;
+    private Double progressPercentage;   // progression de l'utilisateur sur la leçon (0 à 100)
+    private Double videoPosition;        // vidéo : où reprendre la lecture (secondes)
     private String starterCode;
     private String language;
     private boolean exercise;

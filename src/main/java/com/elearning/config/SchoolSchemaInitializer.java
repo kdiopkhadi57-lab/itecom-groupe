@@ -28,12 +28,34 @@ public class SchoolSchemaInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        for (String sql : statements(isMysql())) {
+        boolean mysql = isMysql();
+        for (String sql : statements(mysql)) {
             try {
                 jdbcTemplate.execute(sql);
             } catch (Exception e) {
                 log.warn("Scolarité : création de table impossible ({})", e.getMessage());
             }
+        }
+        // Progression des vidéos (position de reprise, plages regardées)
+        ensureColumn(mysql, "progress", "video_position", "DOUBLE PRECISION");
+        ensureColumn(mysql, "progress", "video_duration", "DOUBLE PRECISION");
+        ensureColumn(mysql, "progress", "watched_ranges", "TEXT");
+    }
+
+    /** Ajoute une colonne si elle manque (MySQL 8 ne connaît pas « ADD COLUMN IF NOT EXISTS »). */
+    private void ensureColumn(boolean mysql, String table, String column, String type) {
+        try {
+            String schema = mysql ? "DATABASE()" : "current_schema()";
+            Integer n = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = " + schema
+                + " AND LOWER(table_name) = ? AND LOWER(column_name) = ?", Integer.class, table, column);
+            Integer tables = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = " + schema
+                + " AND LOWER(table_name) = ?", Integer.class, table);
+            if (tables != null && tables > 0 && (n == null || n == 0)) {
+                jdbcTemplate.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
+                log.info("Colonne {}.{} ajoutée", table, column);
+            }
+        } catch (Exception e) {
+            log.warn("Colonne {}.{} non ajoutée : {}", table, column, e.getMessage());
         }
     }
 

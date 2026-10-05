@@ -84,7 +84,8 @@ public class TeacherCourseProgressController {
             s.id = u.getId(); s.firstName = u.getFirstName(); s.lastName = u.getLastName();
             s.email = u.getEmail(); s.level = u.getLevel();
             s.completedLessons = (int) lessons.stream().filter(l -> byLesson.containsKey(l.getId()) && byLesson.get(l.getId()).isCompleted()).count();
-            s.percentage = total > 0 ? Math.round(s.completedLessons * 1000.0 / total) / 10.0 : 0;
+            // Même calcul que pour l'étudiant : les leçons commencées comptent pour leur part
+            s.percentage = com.elearning.service.LessonProgressService.coursePercent(lessons, byLesson);
             s.timeSpentSeconds = list.stream().mapToInt(p -> p.getWatchedSeconds() == null ? 0 : p.getWatchedSeconds()).sum();
             s.lastActivity = list.stream().map(Progress::getLastUpdated).filter(Objects::nonNull)
                 .max(LocalDateTime::compareTo).map(LocalDateTime::toString).orElse(null);
@@ -93,7 +94,7 @@ public class TeacherCourseProgressController {
                 LessonProgressDto lp = new LessonProgressDto();
                 lp.lessonId = l.getId();
                 lp.completed = p != null && p.isCompleted();
-                lp.percentage = p != null && p.getPercentage() != null ? p.getPercentage() : 0;
+                lp.percentage = com.elearning.service.LessonProgressService.lessonPercent(p);
                 lp.timeSpentSeconds = p != null && p.getWatchedSeconds() != null ? p.getWatchedSeconds() : 0;
                 return lp;
             }).toList();

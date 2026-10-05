@@ -19,6 +19,11 @@ public class Progress {
     private Integer watchedSeconds = 0;
     private Double percentage = 0.0;
 
+    /** Vidéo : position de reprise, durée et plages réellement regardées ([[début, fin], …] en secondes, JSON). */
+    private Double videoPosition;
+    private Double videoDuration;
+    @Column(columnDefinition = "TEXT") private String watchedRanges;
+
     /** Travail en cours de l'élève sur cette leçon/exercice (code et/ou projet Java multi-fichiers), en JSON. */
     @Column(columnDefinition = "TEXT") private String savedCode;
 
