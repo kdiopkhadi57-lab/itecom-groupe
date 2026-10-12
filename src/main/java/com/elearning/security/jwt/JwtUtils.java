@@ -27,9 +27,10 @@ public class JwtUtils {
         return Keys.hmacShaKeyFor(Decoders.BASE64.decode(java.util.Base64.getEncoder().encodeToString(jwtSecret.getBytes())));
     }
 
-    public String generateAccessToken(String email) {
+    public String generateAccessToken(String email, String sessionId) {
         return Jwts.builder()
             .setSubject(email)
+            .claim("sid", sessionId)
             .setIssuedAt(new Date())
             .setExpiration(new Date(System.currentTimeMillis() + jwtExpirationMs))
             .signWith(key(), SignatureAlgorithm.HS256)
@@ -37,9 +38,10 @@ public class JwtUtils {
     }
 
     /** Jeton de rafraîchissement : marqué « refresh », il ne sert qu'à obtenir un nouveau jeton d'accès. */
-    public String generateRefreshToken(String email) {
+    public String generateRefreshToken(String email, String sessionId) {
         return Jwts.builder()
             .setSubject(email)
+            .claim("sid", sessionId)
             .claim("typ", "refresh")
             .setIssuedAt(new Date())
             .setExpiration(new Date(System.currentTimeMillis() + refreshExpirationMs))
@@ -50,6 +52,16 @@ public class JwtUtils {
     public String getEmailFromToken(String token) {
         return Jwts.parserBuilder().setSigningKey(key()).build()
             .parseClaimsJws(token).getBody().getSubject();
+    }
+
+    /** Session du jeton (null pour un jeton émis avant la règle « une seule session par compte »). */
+    public String getSessionId(String token) {
+        try {
+            Object sid = Jwts.parserBuilder().setSigningKey(key()).build().parseClaimsJws(token).getBody().get("sid");
+            return sid == null ? null : sid.toString();
+        } catch (JwtException | IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /** Email du jeton s'il est valide et marqué « refresh », sinon null. */

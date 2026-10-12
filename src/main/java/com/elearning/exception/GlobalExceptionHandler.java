@@ -25,6 +25,11 @@ public class GlobalExceptionHandler {
             .body(ApiResponse.error("Email ou mot de passe incorrect"));
     }
 
+    @ExceptionHandler(SessionReplacedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleSessionReplaced(SessionReplacedException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.error(ex.getMessage()));
+    }
+
     @ExceptionHandler(DisabledException.class)
     public ResponseEntity<ApiResponse<Void>> handleDisabled(DisabledException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)

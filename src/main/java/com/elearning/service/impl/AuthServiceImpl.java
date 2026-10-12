@@ -80,7 +80,8 @@ public class AuthServiceImpl implements AuthService {
         User user = userRepository.findByEmail(request.getEmail())
             .orElseThrow(() -> new RuntimeException("Utilisateur non trouvé"));
 
-        return session(user);
+        // Une seule session par compte : cette connexion remplace celle ouverte ailleurs
+        return session(user, UUID.randomUUID().toString());
     }
 
     @Override
@@ -91,11 +92,15 @@ public class AuthServiceImpl implements AuthService {
         if (user == null || !user.isEnabled()) {
             throw new org.springframework.security.authentication.BadCredentialsException("Session expirée : veuillez vous reconnecter.");
         }
-        return session(user);
+        String sid = jwtUtils.getSessionId(refreshToken);
+        if (user.getSessionId() != null && !user.getSessionId().equals(sid)) {
+            throw new com.elearning.exception.SessionReplacedException();
+        }
+        return session(user, sid != null ? sid : UUID.randomUUID().toString());
     }
 
     /** Jetons et profil renvoyés à la connexion ; refusé si le compte est bloqué. */
-    private AuthResponse session(User user) {
+    private AuthResponse session(User user, String sessionId) {
         if (user.getBlockedUntil() != null) {
             if (user.getBlockedUntil().isAfter(LocalDateTime.now())) {
                 throw new AccountBlockedException(user.getBlockedUntil());
@@ -105,8 +110,12 @@ public class AuthServiceImpl implements AuthService {
             userRepository.save(user);
         }
 
-        String accessToken = jwtUtils.generateAccessToken(user.getEmail());
-        String refreshToken = jwtUtils.generateRefreshToken(user.getEmail());
+        if (!sessionId.equals(user.getSessionId())) {
+            user.setSessionId(sessionId);
+            userRepository.save(user);
+        }
+        String accessToken = jwtUtils.generateAccessToken(user.getEmail(), sessionId);
+        String refreshToken = jwtUtils.generateRefreshToken(user.getEmail(), sessionId);
 
         UserResponse userResponse = UserResponse.builder()
             .id(user.getId()).firstName(user.getFirstName()).lastName(user.getLastName())

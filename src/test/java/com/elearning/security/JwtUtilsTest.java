@@ -19,13 +19,21 @@ class JwtUtilsTest {
     @Test
     void refreshTokenRenewsTheSessionButIsNotAnAccessToken() {
         JwtUtils j = jwt();
-        String access = j.generateAccessToken("awa@test.com");
-        String refresh = j.generateRefreshToken("awa@test.com");
+        String access = j.generateAccessToken("awa@test.com", "s1");
+        String refresh = j.generateRefreshToken("awa@test.com", "s1");
 
         assertEquals("awa@test.com", j.getEmailFromRefreshToken(refresh));
         assertNull(j.getEmailFromRefreshToken(access), "un jeton d'accès ne renouvelle pas la session");
         assertNull(j.getEmailFromRefreshToken("faux.jeton.x"));
         assertTrue(j.isRefreshToken(refresh));
         assertFalse(j.isRefreshToken(access), "le jeton d'accès reste accepté par le filtre");
+    }
+
+    @Test
+    void tokensCarryTheirSession() {
+        JwtUtils j = jwt();
+        assertEquals("s1", j.getSessionId(j.generateAccessToken("awa@test.com", "s1")));
+        assertEquals("s1", j.getSessionId(j.generateRefreshToken("awa@test.com", "s1")));
+        assertNull(j.getSessionId("faux.jeton.x"));
     }
 }

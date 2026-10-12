@@ -24,6 +24,8 @@ public class User {
     @Column(name = "study_level") private String level;
     // Professeur : matières enseignées
     @Column(length = 500) private String subjects;
+    /** Session ouverte (une seule à la fois) : une nouvelle connexion remplace la précédente. */
+    @Column(name = "session_id", length = 64) private String sessionId;
     private String avatarUrl;
     private String bio;
     private String phone;

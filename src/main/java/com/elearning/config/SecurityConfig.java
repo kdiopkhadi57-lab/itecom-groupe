@@ -53,7 +53,11 @@ public class SecurityConfig {
             .exceptionHandling(ex -> ex.authenticationEntryPoint((request, response, authException) -> {
                 response.setStatus(jakarta.servlet.http.HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json;charset=UTF-8");
-                response.getWriter().write("{\"message\":\"Session expirée : veuillez vous reconnecter.\"}");
+                if (request.getAttribute(com.elearning.security.jwt.JwtAuthFilter.SESSION_REPLACED) != null) {
+                    response.getWriter().write("{\"code\":\"SESSION_REPLACED\",\"message\":\"" + com.elearning.exception.SessionReplacedException.MESSAGE + "\"}");
+                } else {
+                    response.getWriter().write("{\"message\":\"Session expirée : veuillez vous reconnecter.\"}");
+                }
             }))
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();

@@ -369,6 +369,7 @@ private boolean isMysqlDatabase() {
             ensureMysqlColumn("users", "birth_place", "VARCHAR(255)");
             ensureMysqlColumn("users", "study_level", "VARCHAR(20)");
             ensureMysqlColumn("users", "subjects", "VARCHAR(500)");
+            ensureMysqlColumn("users", "session_id", "VARCHAR(64)");
             ensureMysqlColumn("qcm_passages", "draft_saved_at", "DATETIME");
             ensureMysqlColumn("qcm_students", "first_name", "VARCHAR(255)");
             ensureMysqlColumn("qcm_students", "last_name", "VARCHAR(255)");

@@ -24,6 +24,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtUtils jwtUtils;
     private final UserDetailsServiceImpl userDetailsService;
+    private final com.elearning.repository.UserRepository userRepository;
+
+    /** Attribut posé quand le jeton appartient à une session remplacée par une connexion plus récente. */
+    public static final String SESSION_REPLACED = "sessionReplaced";
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -33,6 +37,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             String jwt = parseJwt(request);
             if (jwt != null && jwtUtils.validateToken(jwt) && !jwtUtils.isRefreshToken(jwt)) {
                 String email = jwtUtils.getEmailFromToken(jwt);
+                // Une seule session par compte : le jeton d'une session remplacée n'est plus accepté
+                String current = userRepository.findByEmail(email).map(com.elearning.entity.User::getSessionId).orElse(null);
+                if (current != null && !current.equals(jwtUtils.getSessionId(jwt))) {
+                    request.setAttribute(SESSION_REPLACED, true);
+                    filterChain.doFilter(request, response);
+                    return;
+                }
                 UserDetails userDetails = userDetailsService.loadUserByUsername(email);
                 UsernamePasswordAuthenticationToken auth =
                     new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
