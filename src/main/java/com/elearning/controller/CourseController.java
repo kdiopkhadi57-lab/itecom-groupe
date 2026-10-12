@@ -28,7 +28,9 @@ public class CourseController {
     @GetMapping("/api/courses/public")
     public ResponseEntity<List<CourseResponse>> getPublicCourses(
             @RequestParam(required = false) String category,
-            @RequestParam(required = false) String search) {
+            @RequestParam(required = false) String search,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = userDetails != null ? userRepository.findByEmail(userDetails.getUsername()).orElse(null) : null;
         List<Course> courses;
         if (search != null && !search.isEmpty()) {
             courses = courseRepository.findByTitleContainingIgnoreCaseAndPublishedTrue(search);
@@ -38,7 +40,8 @@ public class CourseController {
         } else {
             courses = courseRepository.findByPublishedTrue();
         }
-        return ResponseEntity.ok(courses.stream().map(this::toCourseResponse).collect(Collectors.toList()));
+        return ResponseEntity.ok(courses.stream().filter(c -> forStudentLevel(c, user))
+            .map(this::toCourseResponse).collect(Collectors.toList()));
     }
 
     @GetMapping("/api/courses/public/{id}")
@@ -47,6 +50,9 @@ public class CourseController {
             @AuthenticationPrincipal UserDetails userDetails) {
         Course course = courseRepository.findById(id).orElseThrow();
         User user = userDetails != null ? userRepository.findByEmail(userDetails.getUsername()).orElse(null) : null;
+        if (!forStudentLevel(course, user) && !user.getEnrolledCourses().contains(course)) {
+            return ResponseEntity.status(403).build();
+        }
         return ResponseEntity.ok(toCourseResponse(course, user));
     }
 
@@ -65,6 +71,9 @@ public class CourseController {
             @AuthenticationPrincipal UserDetails userDetails) {
         User user = userRepository.findByEmail(userDetails.getUsername()).orElseThrow();
         Course course = courseRepository.findById(id).orElseThrow();
+        if (!forStudentLevel(course, user) && !user.getEnrolledCourses().contains(course)) {
+            return ResponseEntity.status(403).body(ApiResponse.error("Ce cours n'est pas programmé pour votre niveau"));
+        }
         if (!user.getEnrolledCourses().contains(course)) {
             user.getEnrolledCourses().add(course);
             userRepository.save(user);
@@ -134,6 +143,12 @@ public class CourseController {
         virtualClassRepository.findByCourseId(id).forEach(vc -> vc.setCourse(null));
         courseRepository.delete(course);
         return ResponseEntity.ok(ApiResponse.success("Cours supprimé", null));
+    }
+
+    /** Un étudiant ne voit que les cours de son niveau (tous si son niveau n'est pas renseigné). */
+    private static boolean forStudentLevel(Course course, User user) {
+        if (user == null || user.getRole() != Role.ROLE_STUDENT || user.getLevel() == null || user.getLevel().isBlank()) return true;
+        return user.getLevel().trim().equalsIgnoreCase(course.getLevel());
     }
 
     /** Un professeur ne gère que ses propres cours ; l'administrateur les gère tous. */
