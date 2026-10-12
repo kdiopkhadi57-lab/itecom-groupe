@@ -100,8 +100,12 @@ public class CourseController {
     @PutMapping("/api/teacher/courses/{id}")
     public ResponseEntity<?> updateCourse(
             @PathVariable Long id,
-            @RequestBody Course courseData) {
+            @RequestBody Course courseData,
+            @AuthenticationPrincipal UserDetails userDetails) {
         Course course = courseRepository.findById(id).orElseThrow();
+        if (!canManage(course, userDetails)) {
+            return ResponseEntity.status(403).body(java.util.Map.of("message", "Vous ne pouvez modifier que vos propres cours"));
+        }
         String level = Course.normalizeLevel(courseData.getLevel());
         if (level == null) return ResponseEntity.badRequest().body(java.util.Map.of("message", "Niveau invalide : choisissez L1, L2, L3, M1 ou M2."));
         course.setTitle(courseData.getTitle());
@@ -120,9 +124,7 @@ public class CourseController {
             @AuthenticationPrincipal UserDetails userDetails) {
         Course course = courseRepository.findById(id).orElse(null);
         if (course == null) return ResponseEntity.status(404).body(ApiResponse.error("Cours introuvable"));
-        User user = userRepository.findByEmail(userDetails.getUsername()).orElseThrow();
-        boolean owner = course.getTeacher() != null && course.getTeacher().getId().equals(user.getId());
-        if (!owner && user.getRole() != Role.ROLE_ADMIN) {
+        if (!canManage(course, userDetails)) {
             return ResponseEntity.status(403).body(ApiResponse.error("Vous ne pouvez supprimer que vos propres cours"));
         }
         // Références vers le cours et ses leçons (clés étrangères) : retirées avant le cours lui-même
@@ -132,6 +134,13 @@ public class CourseController {
         virtualClassRepository.findByCourseId(id).forEach(vc -> vc.setCourse(null));
         courseRepository.delete(course);
         return ResponseEntity.ok(ApiResponse.success("Cours supprimé", null));
+    }
+
+    /** Un professeur ne gère que ses propres cours ; l'administrateur les gère tous. */
+    private boolean canManage(Course course, UserDetails userDetails) {
+        User user = userRepository.findByEmail(userDetails.getUsername()).orElseThrow();
+        boolean owner = course.getTeacher() != null && course.getTeacher().getId().equals(user.getId());
+        return owner || user.getRole() == Role.ROLE_ADMIN;
     }
 
     private CourseResponse toCourseResponse(Course course) {
