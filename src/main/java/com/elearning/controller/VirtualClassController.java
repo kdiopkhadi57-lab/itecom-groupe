@@ -52,16 +52,22 @@ public class VirtualClassController {
 
     @GetMapping("/api/virtual-classes")
     @Transactional(readOnly = true)
-    public ResponseEntity<List<VirtualClassResponse>> getAll() {
+    public ResponseEntity<List<VirtualClassResponse>> getAll(@AuthenticationPrincipal UserDetails userDetails) {
+        User user = userRepository.findByEmail(userDetails.getUsername()).orElseThrow();
+        // Professeur : ses séances ; étudiant : celles de son niveau ou de sa liste ; administrateur : toutes
         return ResponseEntity.ok(virtualClassRepository.findAll().stream()
+            .filter(vc -> VirtualClassAttendanceController.canJoin(vc, user))
             .map(this::toResponse).toList());
     }
 
     @GetMapping("/api/virtual-classes/{id}")
     @Transactional(readOnly = true)
-    public ResponseEntity<VirtualClassResponse> getById(@PathVariable Long id) {
-        return ResponseEntity.ok(toResponse(
-            virtualClassRepository.findById(id).orElseThrow()));
+    public ResponseEntity<VirtualClassResponse> getById(@PathVariable Long id, @AuthenticationPrincipal UserDetails userDetails) {
+        VirtualClass vc = virtualClassRepository.findById(id).orElseThrow();
+        if (!VirtualClassAttendanceController.canJoin(vc, userRepository.findByEmail(userDetails.getUsername()).orElseThrow())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        return ResponseEntity.ok(toResponse(vc));
     }
 
     @GetMapping("/api/virtual-classes/{id}/jitsi-token")
@@ -71,10 +77,7 @@ public class VirtualClassController {
             @AuthenticationPrincipal UserDetails userDetails) {
         VirtualClass virtualClass = virtualClassRepository.findById(id).orElseThrow();
         User user = userRepository.findByEmail(userDetails.getUsername()).orElseThrow();
-        boolean admin = user.getRole() == Role.ROLE_ADMIN;
-        boolean teacher = user.getRole() == Role.ROLE_TEACHER;
-        boolean host = admin || teacher || (virtualClass.getTeacher() != null
-            && virtualClass.getTeacher().getId().equals(user.getId()));
+        boolean host = VirtualClassAttendanceController.isHost(virtualClass, user);
         boolean assignedStudent = com.elearning.service.StudentAudienceService.isInvited(virtualClass, user);
 
         if (!host && !assignedStudent) {
@@ -92,8 +95,11 @@ public class VirtualClassController {
 
     @GetMapping("/api/virtual-classes/{id}/recording")
     @Transactional(readOnly = true)
-    public ResponseEntity<byte[]> getRecording(@PathVariable Long id) {
+    public ResponseEntity<byte[]> getRecording(@PathVariable Long id, @AuthenticationPrincipal UserDetails userDetails) {
         VirtualClass vc = virtualClassRepository.findById(id).orElseThrow();
+        if (!VirtualClassAttendanceController.canJoin(vc, userRepository.findByEmail(userDetails.getUsername()).orElseThrow())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         // Enregistrement rangé en fichier : lecture en streaming depuis /uploads
         if (recordingStorage.fileAvailable(vc)) {
             return ResponseEntity.status(HttpStatus.FOUND)
@@ -163,8 +169,11 @@ public class VirtualClassController {
     @PutMapping("/api/teacher/virtual-classes/{id}/status")
     @Transactional
     public ResponseEntity<VirtualClassResponse> updateStatus(
-            @PathVariable Long id, @RequestParam String status) {
+            @PathVariable Long id, @RequestParam String status, @AuthenticationPrincipal UserDetails userDetails) {
         VirtualClass vc = virtualClassRepository.findById(id).orElseThrow();
+        if (!VirtualClassAttendanceController.isHost(vc, userRepository.findByEmail(userDetails.getUsername()).orElseThrow())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         vc.setStatus(status);
         return ResponseEntity.ok(toResponse(virtualClassRepository.save(vc)));
     }
@@ -175,8 +184,12 @@ public class VirtualClassController {
     public ResponseEntity<VirtualClassResponse> uploadRecording(
             @PathVariable Long id,
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "thumbnail", required = false) String thumbnailBase64) throws java.io.IOException {
+            @RequestParam(value = "thumbnail", required = false) String thumbnailBase64,
+            @AuthenticationPrincipal UserDetails userDetails) throws java.io.IOException {
         VirtualClass vc = virtualClassRepository.findById(id).orElseThrow();
+        if (!VirtualClassAttendanceController.isHost(vc, userRepository.findByEmail(userDetails.getUsername()).orElseThrow())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         recordingStorage.store(vc, file, thumbnailBase64);
         vc.setStatus("COMPLETED");
         return ResponseEntity.ok(toResponse(virtualClassRepository.save(vc)));
