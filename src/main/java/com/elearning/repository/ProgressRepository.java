@@ -20,4 +20,6 @@ public interface ProgressRepository extends JpaRepository<Progress, Long> {
     long countCompletedLessonsByUserAndCourse(User user, Course course);
 
     void deleteByLessonId(Long lessonId);
+
+    void deleteByCourse(Course course);
 }

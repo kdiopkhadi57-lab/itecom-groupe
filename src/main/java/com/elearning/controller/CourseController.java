@@ -21,6 +21,8 @@ public class CourseController {
     private final CourseRepository courseRepository;
     private final UserRepository userRepository;
     private final ProgressRepository progressRepository;
+    private final VirtualClassRepository virtualClassRepository;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     // Public endpoints
     @GetMapping("/api/courses/public")
@@ -108,6 +110,28 @@ public class CourseController {
         course.setLevel(level);
         course.setPublished(courseData.isPublished());
         return ResponseEntity.ok(toCourseResponse(courseRepository.save(course)));
+    }
+
+    /** Suppression d'un cours par son professeur (ou un administrateur), avec ses leçons et la progression des étudiants. */
+    @DeleteMapping("/api/teacher/courses/{id}")
+    @org.springframework.transaction.annotation.Transactional
+    public ResponseEntity<ApiResponse<String>> deleteCourse(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        Course course = courseRepository.findById(id).orElse(null);
+        if (course == null) return ResponseEntity.status(404).body(ApiResponse.error("Cours introuvable"));
+        User user = userRepository.findByEmail(userDetails.getUsername()).orElseThrow();
+        boolean owner = course.getTeacher() != null && course.getTeacher().getId().equals(user.getId());
+        if (!owner && user.getRole() != Role.ROLE_ADMIN) {
+            return ResponseEntity.status(403).body(ApiResponse.error("Vous ne pouvez supprimer que vos propres cours"));
+        }
+        // Références vers le cours et ses leçons (clés étrangères) : retirées avant le cours lui-même
+        progressRepository.deleteByCourse(course);
+        course.getLessons().forEach(l -> progressRepository.deleteByLessonId(l.getId()));
+        jdbcTemplate.update("DELETE FROM user_enrollments WHERE course_id = ?", id);
+        virtualClassRepository.findByCourseId(id).forEach(vc -> vc.setCourse(null));
+        courseRepository.delete(course);
+        return ResponseEntity.ok(ApiResponse.success("Cours supprimé", null));
     }
 
     private CourseResponse toCourseResponse(Course course) {
